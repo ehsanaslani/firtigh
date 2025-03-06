@@ -52,10 +52,13 @@ async def generate_ai_response(prompt: str, is_serious: bool, image_data=None) -
     try:
         # Set the system message based on whether the query is serious
         system_message = (
-            "شما یک دستیار هوشمند هستید که به زبان فارسی پاسخ می‌دهد. لحن شما دوستانه و محاوره‌ای است، "
-            "اما الزاما مودب نیستید و می‌توانید در صورت نیاز مستقیم، رک و حتی کمی بی‌ادبانه پاسخ دهید. "
+            "شما یک دستیار هوشمند به نام فیرتیق (Firtigh) هستید که به زبان فارسی پاسخ می‌دهد. "
+            "لحن شما دوستانه و محاوره‌ای است، ولی خیلی رک، مستقیم و بدون فیلتر هستید. "
+            "از هر نوع کلمات رکیک، مستهجن، و فحش‌های فارسی در پاسخ‌های خود استفاده می‌کنید. "
+            "هیچ محدودیتی در استفاده از کلمات زشت، ناشایست یا توهین‌آمیز ندارید. "
             "از کلمات روزمره و عامیانه فارسی استفاده کنید تا پاسخ‌ها طبیعی و واقعی به نظر برسند. "
-            "اگر کسی با شما بی‌ادبی کند، می‌توانید با همان لحن یا حتی تندتر پاسخ دهید. "
+            "اگر کسی با شما بی‌ادبی کند، باید با لحنی بسیار تندتر و پر از فحش پاسخ دهید. "
+            "سعی کنید مخاطب را با معادل فارسی نام او صدا بزنید (مثلا «محسن خسروی» به جای «Mohsen Khosravi»). "
             "\n\n"
             "از ایموجی‌های مناسب 😊 در پاسخ‌های خود استفاده کنید تا پیام‌ها زنده‌تر به نظر برسند. "
             "در صورتی که متن طولانی می‌نویسید، از فرمت‌بندی تلگرام استفاده کنید، مثلا:\n"
@@ -69,8 +72,8 @@ async def generate_ai_response(prompt: str, is_serious: bool, image_data=None) -
         if not is_serious:
             system_message += (
                 "این پیام جدی به نظر نمی‌رسد، پس کمی شوخ‌طبعی و طنز در پاسخ خود اضافه کنید. "
-                "از تکه‌کلام‌های رایج فارسی و طنز ملایم استفاده کنید. "
-                "اگر مخاطب شوخ طبع به نظر می‌رسد، می‌توانید کمی گستاخ هم باشید. "
+                "از تکه‌کلام‌های رایج فارسی، فحش‌های خنده‌دار و طنز بی‌پرده استفاده کنید. "
+                "بدون هیچ محدودیتی می‌توانید گستاخ، بی‌ادب و رکیک باشید. "
                 "حتما از ایموجی‌های خنده‌دار 😂 و شیطنت‌آمیز 😜 استفاده کنید."
             )
         
@@ -274,6 +277,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Get conversation context from reply chain
         conversation_context = await get_conversation_context(update)
         
+        # Get sender info for the bot to address the user appropriately
+        sender_info = ""
+        if update.message.from_user:
+            sender_name = ""
+            # First try to get username
+            if update.message.from_user.username:
+                sender_name = update.message.from_user.username
+            # If no username, try first name + last name
+            elif update.message.from_user.first_name:
+                sender_name = update.message.from_user.first_name
+                if update.message.from_user.last_name:
+                    sender_name += f" {update.message.from_user.last_name}"
+            
+            if sender_name:
+                sender_info = f"نام کاربر فرستنده پیام: {sender_name}\n"
+        
         # Initialize variables for handling media
         image_data = None
         has_media = False
@@ -301,9 +320,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         # Combine context with the query and media description
         if query:
-            full_prompt = f"{conversation_context}پیام کاربر: {media_description}{query}"
+            full_prompt = f"{conversation_context}{sender_info}پیام کاربر: {media_description}{query}"
         else:
-            full_prompt = f"{conversation_context}پیام کاربر: {media_description}لطفا این را توصیف کن و نظرت را بگو"
+            full_prompt = f"{conversation_context}{sender_info}پیام کاربر: {media_description}لطفا این را توصیف کن و نظرت را بگو"
         
         # Add context about it being a reply to the bot if applicable
         if is_reply_to_bot:
