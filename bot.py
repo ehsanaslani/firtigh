@@ -211,6 +211,19 @@ async def download_telegram_file(file_id, context):
         logger.error(f"Error downloading file: {e}")
         return None
 
+def escape_markdown_v2(text):
+    """
+    Escape special characters for Telegram's MarkdownV2 format.
+    """
+    # Characters that need to be escaped in MarkdownV2
+    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    
+    # Escape each special character with a backslash
+    for char in special_chars:
+        text = text.replace(char, f'\\{char}')
+    
+    return text
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle messages that mention the bot or reply to the bot's messages."""
     # Skip processing if there's no message
@@ -302,7 +315,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Generate and send AI response
         await update.message.reply_chat_action("typing")
         ai_response = await generate_ai_response(full_prompt, is_serious, image_data)
-        await update.message.reply_text(ai_response, parse_mode=ParseMode.MARKDOWN_V2)
+        
+        # Try to send with Markdown formatting, but fall back to plain text if there's an error
+        try:
+            # Skip escape for messages that contain code blocks or complex formatting
+            if "```" in ai_response or "~~~" in ai_response:
+                # Try sending with regular Markdown first
+                await update.message.reply_text(ai_response, parse_mode=ParseMode.MARKDOWN)
+            else:
+                # Escape for MarkdownV2 and send
+                escaped_response = escape_markdown_v2(ai_response)
+                await update.message.reply_text(escaped_response, parse_mode=ParseMode.MARKDOWN_V2)
+        except Exception as e:
+            logger.error(f"Error sending formatted message: {e}")
+            # Fall back to plain text with no formatting
+            await update.message.reply_text(ai_response)
 
 def main() -> None:
     """Start the bot."""
