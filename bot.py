@@ -1,9 +1,14 @@
 import os
 import logging
+import base64
+import tempfile
+import requests
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.constants import ParseMode
 import openai
 from dotenv import load_dotenv
+from io import BytesIO
 
 # Load environment variables from .env file
 load_dotenv()
@@ -42,7 +47,7 @@ async def is_serious_question(text: str) -> bool:
             
     return False
 
-async def generate_ai_response(prompt: str, is_serious: bool) -> str:
+async def generate_ai_response(prompt: str, is_serious: bool, image_data=None) -> str:
     """Generate a response using OpenAI's API."""
     try:
         # Set the system message based on whether the query is serious
@@ -51,6 +56,13 @@ async def generate_ai_response(prompt: str, is_serious: bool) -> str:
             "اما الزاما مودب نیستید و می‌توانید در صورت نیاز مستقیم، رک و حتی کمی بی‌ادبانه پاسخ دهید. "
             "از کلمات روزمره و عامیانه فارسی استفاده کنید تا پاسخ‌ها طبیعی و واقعی به نظر برسند. "
             "اگر کسی با شما بی‌ادبی کند، می‌توانید با همان لحن یا حتی تندتر پاسخ دهید. "
+            "\n\n"
+            "از ایموجی‌های مناسب 😊 در پاسخ‌های خود استفاده کنید تا پیام‌ها زنده‌تر به نظر برسند. "
+            "در صورتی که متن طولانی می‌نویسید، از فرمت‌بندی تلگرام استفاده کنید، مثلا:\n"
+            "- برای *متن پررنگ* از ستاره استفاده کنید\n"
+            "- برای _متن مورب_ از زیرخط استفاده کنید\n"
+            "- برای `کد یا نقل قول` از بک‌تیک استفاده کنید\n"
+            "- برای [لینک‌ها](URL) از فرمت مارک‌داون استفاده کنید\n"
         )
         
         # Add humor instruction for non-serious messages
@@ -58,22 +70,46 @@ async def generate_ai_response(prompt: str, is_serious: bool) -> str:
             system_message += (
                 "این پیام جدی به نظر نمی‌رسد، پس کمی شوخ‌طبعی و طنز در پاسخ خود اضافه کنید. "
                 "از تکه‌کلام‌های رایج فارسی و طنز ملایم استفاده کنید. "
-                "اگر مخاطب شوخ طبع به نظر می‌رسد، می‌توانید کمی گستاخ هم باشید."
+                "اگر مخاطب شوخ طبع به نظر می‌رسد، می‌توانید کمی گستاخ هم باشید. "
+                "حتما از ایموجی‌های خنده‌دار 😂 و شیطنت‌آمیز 😜 استفاده کنید."
             )
         
+        # Prepare messages for API call
+        messages = [
+            {"role": "system", "content": system_message},
+        ]
+        
+        # Handle image data if available
+        if image_data:
+            # Use GPT-4 Vision model
+            messages.append({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{image_data}"
+                        }
+                    }
+                ]
+            })
+            model = "gpt-4o"  # Use model that supports vision
+        else:
+            # Text-only query
+            messages.append({"role": "user", "content": prompt})
+            model = "gpt-4o-mini"
+        
         response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",  # Changed from gpt-4 to gpt-4o-mini
-            messages=[
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": prompt}
-            ],
+            model=model,
+            messages=messages,
             max_tokens=500,
             temperature=0.8,  # Slightly higher temperature for more creative responses
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
         logger.error(f"Error generating AI response: {e}")
-        return "متأسفم، در حال حاضر نمی‌توانم پاسخی تولید کنم."
+        return "متأسفم، در حال حاضر نمی‌توانم پاسخی تولید کنم. 😔"
 
 async def get_conversation_context(update: Update, depth=3):
     """
@@ -90,8 +126,8 @@ async def get_conversation_context(update: Update, depth=3):
     current_message = update.message
     current_depth = 0
     
-    # Process the reply chain up to specified depth
-    while current_message and current_message.reply_to_message and current_depth < depth:
+    # Check if this is a direct reply to a message
+    if current_message and current_message.reply_to_message:
         replied_to = current_message.reply_to_message
         
         # Get sender info if available
@@ -102,13 +138,54 @@ async def get_conversation_context(update: Update, depth=3):
             elif replied_to.from_user.first_name:
                 sender_name = replied_to.from_user.first_name
         
-        # Add the message to our context list
-        if replied_to.text:
-            context_messages.append(f"{sender_name}: {replied_to.text}")
+        # Capture message content with rich context
+        message_content = ""
         
-        # Move up the chain to the previous message
-        current_message = replied_to
-        current_depth += 1
+        # Text content
+        if replied_to.text:
+            message_content += replied_to.text
+        
+        # Photo content
+        if replied_to.photo:
+            message_content += " [این پیام شامل یک تصویر است]"
+        
+        # Animation/GIF content
+        if replied_to.animation:
+            message_content += " [این پیام شامل یک GIF/انیمیشن است]"
+        
+        # Sticker content
+        if replied_to.sticker:
+            emoji = replied_to.sticker.emoji or ""
+            message_content += f" [استیکر {emoji}]"
+        
+        # Document/File content
+        if replied_to.document:
+            file_name = replied_to.document.file_name or "فایل"
+            message_content += f" [فایل: {file_name}]"
+            
+        # Add the message to our context list if it has content
+        if message_content:
+            context_messages.append(f"{sender_name}: {message_content}")
+    
+        # Process the reply chain up to specified depth
+        while current_message and current_message.reply_to_message and current_depth < depth:
+            replied_to = current_message.reply_to_message
+            
+            # Get sender info if available
+            sender_name = "someone"
+            if replied_to.from_user:
+                if replied_to.from_user.username:
+                    sender_name = f"@{replied_to.from_user.username}"
+                elif replied_to.from_user.first_name:
+                    sender_name = replied_to.from_user.first_name
+            
+            # Add the message to our context list
+            if replied_to.text:
+                context_messages.append(f"{sender_name}: {replied_to.text}")
+            
+            # Move up the chain to the previous message
+            current_message = replied_to
+            current_depth += 1
     
     # Reverse the list so it's in chronological order
     context_messages.reverse()
@@ -121,27 +198,40 @@ async def get_conversation_context(update: Update, depth=3):
     
     return ""
 
+async def download_telegram_file(file_id, context):
+    """Download a Telegram file and convert it to base64."""
+    try:
+        file = await context.bot.get_file(file_id)
+        file_bytes = await file.download_as_bytearray()
+        
+        # Convert to base64
+        base64_data = base64.b64encode(file_bytes).decode('utf-8')
+        return base64_data
+    except Exception as e:
+        logger.error(f"Error downloading file: {e}")
+        return None
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle messages that mention the bot or reply to the bot's messages."""
-    # Skip processing if there's no message text
-    if not update.message or not update.message.text:
+    # Skip processing if there's no message
+    if not update.message:
         return
     
-    message_text = update.message.text
+    message_text = update.message.text or ""
     bot_username = context.bot.username.lower() if context.bot.username else "firtigh"
     bot_user_id = context.bot.id
     
     # Different ways the bot might be mentioned in a group
     mentions = [
-        f"فیرتیق",            # In case username is firtigh
-        f"@@firtigh",           # Original format
-        f"@{bot_username}",     # Standard @username mention
-        f"@firtigh",            # In case username is firtigh
-        "firtigh",              # Just the name
+        f"فیرتیق",            # Persian spelling
+        f"@@firtigh",         # Original format
+        f"@{bot_username}",   # Standard @username mention
+        f"@firtigh",          # In case username is firtigh
+        "firtigh",            # Just the name
     ]
     
     # Check if any form of mention is in the message (case insensitive)
-    is_mentioned = any(mention.lower() in message_text.lower() for mention in mentions)
+    is_mentioned = message_text and any(mention.lower() in message_text.lower() for mention in mentions)
     
     # Check if this is a reply to the bot's message
     is_reply_to_bot = False
@@ -158,32 +248,61 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         # Get the query - if it's a mention, remove the mention text
         query = message_text
-        if is_mentioned:
+        if is_mentioned and message_text:
             query = message_text.lower()
             for mention in mentions:
                 query = query.replace(mention.lower(), "").strip()
         
         # If there's no query after processing, ask for more information
-        if not query:
-            await update.message.reply_text("من رو صدا زدی، ولی سوالی نپرسیدی. چطور می‌تونم کمکت کنم؟")
+        if not query and not (update.message.photo or update.message.animation):
+            await update.message.reply_text("من رو صدا زدی، ولی سوالی نپرسیدی. چطور می‌تونم کمکت کنم؟ 🤔")
             return
         
         # Get conversation context from reply chain
         conversation_context = await get_conversation_context(update)
         
-        # Combine context with the query
-        full_prompt = f"{conversation_context}پیام کاربر: {query}"
+        # Initialize variables for handling media
+        image_data = None
+        has_media = False
+        media_description = ""
+
+        # Handle photos
+        if update.message.photo:
+            logger.info("Message contains photo")
+            has_media = True
+            media_description = "[تصویر] "
+            # Get the largest photo (last in the array)
+            photo = update.message.photo[-1]
+            image_data = await download_telegram_file(photo.file_id, context)
+        
+        # Handle animations/GIFs
+        elif update.message.animation:
+            logger.info("Message contains animation/GIF")
+            has_media = True
+            media_description = "[GIF/انیمیشن] "
+            # Try to get a thumbnail or the animation itself
+            if update.message.animation.thumbnail:
+                image_data = await download_telegram_file(update.message.animation.thumbnail.file_id, context)
+            else:
+                image_data = await download_telegram_file(update.message.animation.file_id, context)
+        
+        # Combine context with the query and media description
+        if query:
+            full_prompt = f"{conversation_context}پیام کاربر: {media_description}{query}"
+        else:
+            full_prompt = f"{conversation_context}پیام کاربر: {media_description}لطفا این را توصیف کن و نظرت را بگو"
         
         # Add context about it being a reply to the bot if applicable
         if is_reply_to_bot:
             full_prompt = f"{full_prompt}\n\n(این پیام مستقیما به پیام قبلی شما پاسخ داده شده است)"
         
         # Determine if the message is serious
-        is_serious = await is_serious_question(query)
+        is_serious = await is_serious_question(query if query else "")
         
         # Generate and send AI response
-        ai_response = await generate_ai_response(full_prompt, is_serious)
-        await update.message.reply_text(ai_response)
+        await update.message.reply_chat_action("typing")
+        ai_response = await generate_ai_response(full_prompt, is_serious, image_data)
+        await update.message.reply_text(ai_response, parse_mode=ParseMode.MARKDOWN_V2)
 
 def main() -> None:
     """Start the bot."""
@@ -200,7 +319,7 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     # Process all messages to check for mentions
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
 
     # Log startup
     logger.info("Bot started, waiting for messages...")
