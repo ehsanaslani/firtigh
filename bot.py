@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 from io import BytesIO
 import database
 import summarizer
+import web_search
+import web_extractor
 
 # Load environment variables from .env file
 load_dotenv()
@@ -40,6 +42,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "2. به یکی از پیام‌های من مستقیم پاسخ دهید.\n\n"
         "*قابلیت‌های ویژه:*\n"
         "• می‌توانید از من درخواست خلاصه گفتگوهای گروه را بکنید. مثلا بنویسید: '@firtigh خلاصه بحث‌های سه روز اخیر چیه؟'\n"
+        "• می‌توانید با استفاده از کلماتی مثل 'جستجو' یا 'سرچ'، از من بخواهید اینترنت را جستجو کنم.\n"
+        "• اگر لینکی در پیام خود قرار دهید، من محتوای آن را استخراج و تحلیل می‌کنم.\n"
         "• می‌توانید تصویر یا GIF ارسال کنید و نظر من را بپرسید.\n"
         "• می‌توانید به صورت محاوره‌ای با من گفتگو کنید و سوالات مختلف بپرسید.\n\n"
         "لطفا توجه داشته باشید که من همه پیام‌های گروه را برای قابلیت خلاصه‌سازی ذخیره می‌کنم."
@@ -65,9 +69,18 @@ async def is_serious_question(text: str) -> bool:
             
     return False
 
-async def generate_ai_response(prompt: str, is_serious: bool, image_data=None) -> str:
+async def generate_ai_response(prompt: str, is_serious: bool, image_data=None, search_results=None, web_content=None) -> str:
     """Generate a response using OpenAI's API."""
     try:
+        # Prepare system message content about capabilities
+        capabilities_message = (
+            "شما دارای قابلیت جدید خلاصه‌سازی گفتگوهای گروه هستید. اگر کسی در مورد تاریخچه یا خلاصه گفتگوهای گروه از شما بپرسد، "
+            "باید به او بگویید که می‌تواند با پیامی مثل «@firtigh خلاصه گفتگوهای سه روز اخیر» یا «فیرتیق تاریخچه بحث‌های این هفته چیه؟» "
+            "از شما درخواست خلاصه کند.\n\n"
+            "همچنین می‌توانید اینترنت را جستجو کنید و محتوای لینک‌های ارسالی را تحلیل کنید. "
+            "کاربر می‌تواند با کلماتی مثل «جستجو کن» یا «سرچ» از شما بخواهد اطلاعاتی را از اینترنت پیدا کنید."
+        )
+        
         # Set the system message based on whether the query is serious
         system_message = (
             "شما یک دستیار هوشمند به نام فیرتیق (Firtigh) هستید که به زبان فارسی پاسخ می‌دهد. "
@@ -77,11 +90,7 @@ async def generate_ai_response(prompt: str, is_serious: bool, image_data=None) -
             "از کلمات روزمره و عامیانه فارسی استفاده کنید تا پاسخ‌ها طبیعی و واقعی به نظر برسند. "
             "اگر کسی با شما بی‌ادبی کند، باید با لحنی بسیار تندتر و پر از فحش پاسخ دهید. "
             "سعی کنید مخاطب را با معادل فارسی نام او صدا بزنید (مثلا «محسن خسروی» به جای «Mohsen Khosravi»). "
-            "\n\n"
-            "شما دارای قابلیت جدید خلاصه‌سازی گفتگوهای گروه هستید. اگر کسی در مورد تاریخچه یا خلاصه گفتگوهای گروه از شما بپرسد، "
-            "باید به او بگویید که می‌تواند با پیامی مثل «@firtigh خلاصه گفتگوهای سه روز اخیر» یا «فیرتیق تاریخچه بحث‌های این هفته چیه؟» "
-            "از شما درخواست خلاصه کند."
-            "\n\n"
+            f"\n\n{capabilities_message}\n\n"
             "از ایموجی‌های مناسب 😊 در پاسخ‌های خود استفاده کنید تا پیام‌ها زنده‌تر به نظر برسند. "
             "در صورتی که متن طولانی می‌نویسید، از فرمت‌بندی تلگرام استفاده کنید، مثلا:\n"
             "- برای *متن پررنگ* از ستاره استفاده کنید\n"
@@ -124,6 +133,21 @@ async def generate_ai_response(prompt: str, is_serious: bool, image_data=None) -
             # Text-only query
             messages.append({"role": "user", "content": prompt})
             model = "gpt-4o-mini"
+        
+        # Add additional context if available
+        additional_context = ""
+        
+        # Add search results to the prompt if available
+        if search_results:
+            additional_context += f"\n\nنتایج جستجوی اینترنتی:\n{search_results}\n\n"
+        
+        # Add web content to the prompt if available
+        if web_content:
+            additional_context += f"\n\nمحتوای استخراج شده از لینک‌ها:\n{web_content}\n\n"
+        
+        # Append additional context to the prompt
+        if additional_context:
+            prompt = f"{prompt}\n\n--- اطلاعات تکمیلی ---\n{additional_context}"
         
         response = openai.ChatCompletion.create(
             model=model,
@@ -373,7 +397,35 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
             return
         
-        # Continue with normal message processing for non-history requests
+        # Initialize variables for web search and link content
+        search_results = None
+        web_content = None
+        
+        # Check if this is a search request
+        if await web_search.is_search_request(query):
+            # Extract search query (remove search command keywords)
+            search_keywords = ["جستجو", "search", "بگرد", "پیدا کن", "سرچ", "گوگل", "google"]
+            search_query = query
+            for keyword in search_keywords:
+                search_query = search_query.replace(keyword, "").strip()
+            
+            if not search_query:
+                await update.message.reply_text("لطفا عبارت جستجو را وارد کنید. مثلا: '@firtigh جستجو آخرین اخبار ایران'")
+                return
+            
+            # Inform user that we're searching
+            await update.message.reply_chat_action("typing")
+            await update.message.reply_text(f"در حال جستجوی اینترنت برای: «{search_query}» 🔍")
+            
+            # Perform the search
+            search_result_data = await web_search.search_web(search_query)
+            search_results = web_search.format_search_results(search_result_data)
+        
+        # Process links in the message
+        if message_text:
+            web_content = await web_extractor.process_message_links(message_text)
+        
+        # Continue with normal message processing
         # Get conversation context from reply chain
         conversation_context = await get_conversation_context(update)
         
@@ -433,7 +485,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         # Generate and send AI response
         await update.message.reply_chat_action("typing")
-        ai_response = await generate_ai_response(full_prompt, is_serious, image_data)
+        ai_response = await generate_ai_response(full_prompt, is_serious, image_data, search_results, web_content)
         
         # Try to send with Markdown formatting, but fall back to plain text if there's an error
         try:
