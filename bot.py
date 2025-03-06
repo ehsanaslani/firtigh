@@ -59,7 +59,7 @@ async def generate_ai_response(prompt: str, is_serious: bool) -> str:
             )
         
         response = openai.ChatCompletion.create(
-            model="gpt-4",  # Using a more capable model
+            model="gpt-4o-mini",  # Changed from gpt-4 to gpt-4o-mini
             messages=[
                 {"role": "system", "content": system_message},
                 {"role": "user", "content": prompt}
