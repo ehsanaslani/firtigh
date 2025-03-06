@@ -47,15 +47,18 @@ async def generate_ai_response(prompt: str, is_serious: bool) -> str:
     try:
         # Set the system message based on whether the query is serious
         system_message = (
-            "شما یک دستیار مفید و دوستانه هستید. همیشه به زبان فارسی و با لحنی صمیمی و محاوره‌ای پاسخ دهید. "
-            "از کلمات روزمره و عامیانه استفاده کنید تا پاسخ‌ها طبیعی و دوستانه به نظر برسند. "
+            "شما یک دستیار هوشمند هستید که به زبان فارسی پاسخ می‌دهد. لحن شما دوستانه و محاوره‌ای است، "
+            "اما الزاما مودب نیستید و می‌توانید در صورت نیاز مستقیم، رک و حتی کمی بی‌ادبانه پاسخ دهید. "
+            "از کلمات روزمره و عامیانه فارسی استفاده کنید تا پاسخ‌ها طبیعی و واقعی به نظر برسند. "
+            "اگر کسی با شما بی‌ادبی کند، می‌توانید با همان لحن یا حتی تندتر پاسخ دهید. "
         )
         
         # Add humor instruction for non-serious messages
         if not is_serious:
             system_message += (
                 "این پیام جدی به نظر نمی‌رسد، پس کمی شوخ‌طبعی و طنز در پاسخ خود اضافه کنید. "
-                "از تکه‌کلام‌های رایج فارسی و طنز ملایم استفاده کنید."
+                "از تکه‌کلام‌های رایج فارسی و طنز ملایم استفاده کنید. "
+                "اگر مخاطب شوخ طبع به نظر می‌رسد، می‌توانید کمی گستاخ هم باشید."
             )
         
         response = openai.ChatCompletion.create(
@@ -119,13 +122,14 @@ async def get_conversation_context(update: Update, depth=3):
     return ""
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle messages that mention the bot."""
+    """Handle messages that mention the bot or reply to the bot's messages."""
     # Skip processing if there's no message text
     if not update.message or not update.message.text:
         return
-        
+    
     message_text = update.message.text
     bot_username = context.bot.username.lower() if context.bot.username else "firtigh"
+    bot_user_id = context.bot.id
     
     # Different ways the bot might be mentioned in a group
     mentions = [
@@ -137,18 +141,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     ]
     
     # Check if any form of mention is in the message (case insensitive)
-    mentioned = any(mention.lower() in message_text.lower() for mention in mentions)
+    is_mentioned = any(mention.lower() in message_text.lower() for mention in mentions)
     
-    if mentioned:
-        # Log that the bot was mentioned
-        logger.info(f"Bot mentioned in message: {message_text}")
+    # Check if this is a reply to the bot's message
+    is_reply_to_bot = False
+    if update.message.reply_to_message and update.message.reply_to_message.from_user:
+        is_reply_to_bot = update.message.reply_to_message.from_user.id == bot_user_id
+        if is_reply_to_bot:
+            logger.info(f"User replied to bot's message: {message_text}")
+    
+    # Process if the bot is mentioned or if this is a reply to the bot's message
+    if is_mentioned or is_reply_to_bot:
+        # Log the interaction
+        if is_mentioned:
+            logger.info(f"Bot mentioned in message: {message_text}")
         
-        # Remove all possible mentions to get the actual query
-        query = message_text.lower()
-        for mention in mentions:
-            query = query.replace(mention.lower(), "").strip()
-            
-        # If there's no query after removing the mentions, ask for more information
+        # Get the query - if it's a mention, remove the mention text
+        query = message_text
+        if is_mentioned:
+            query = message_text.lower()
+            for mention in mentions:
+                query = query.replace(mention.lower(), "").strip()
+        
+        # If there's no query after processing, ask for more information
         if not query:
             await update.message.reply_text("من رو صدا زدی، ولی سوالی نپرسیدی. چطور می‌تونم کمکت کنم؟")
             return
@@ -158,6 +173,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         # Combine context with the query
         full_prompt = f"{conversation_context}پیام کاربر: {query}"
+        
+        # Add context about it being a reply to the bot if applicable
+        if is_reply_to_bot:
+            full_prompt = f"{full_prompt}\n\n(این پیام مستقیما به پیام قبلی شما پاسخ داده شده است)"
         
         # Determine if the message is serious
         is_serious = await is_serious_question(query)
