@@ -21,29 +21,56 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /start is issued."""
     user = update.effective_user
     await update.message.reply_html(
-        f"Hi {user.mention_html()}! I'm Firtigh. Mention me with @@firtigh in a message to get a response."
+        f"سلام {user.mention_html()}! من فیرتیق هستم. برای دریافت پاسخ، من رو با @firtigh در پیام خود تگ کنید."
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /help is issued."""
-    await update.message.reply_text("Mention me with @@firtigh in a message to get a response.")
+    await update.message.reply_text("برای دریافت پاسخ، من رو با @firtigh در پیام خود تگ کنید.")
 
-async def generate_ai_response(prompt: str) -> str:
+async def is_serious_question(text: str) -> bool:
+    """Determine if a message appears to be a serious question."""
+    serious_indicators = [
+        '?', 'چطور', 'چگونه', 'آیا', 'چرا', 'کی', 'کجا', 'چه', 'چند',
+        'help', 'problem', 'issue', 'error', 'مشکل', 'خطا', 'کمک'
+    ]
+    
+    # Check if any serious indicators are in the text
+    for indicator in serious_indicators:
+        if indicator in text.lower():
+            return True
+            
+    return False
+
+async def generate_ai_response(prompt: str, is_serious: bool) -> str:
     """Generate a response using OpenAI's API."""
     try:
+        # Set the system message based on whether the query is serious
+        system_message = (
+            "شما یک دستیار مفید و دوستانه هستید. همیشه به زبان فارسی و با لحنی صمیمی و محاوره‌ای پاسخ دهید. "
+            "از کلمات روزمره و عامیانه استفاده کنید تا پاسخ‌ها طبیعی و دوستانه به نظر برسند. "
+        )
+        
+        # Add humor instruction for non-serious messages
+        if not is_serious:
+            system_message += (
+                "این پیام جدی به نظر نمی‌رسد، پس کمی شوخ‌طبعی و طنز در پاسخ خود اضافه کنید. "
+                "از تکه‌کلام‌های رایج فارسی و طنز ملایم استفاده کنید."
+            )
+        
         response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4",  # Using a more capable model
             messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "system", "content": system_message},
                 {"role": "user", "content": prompt}
             ],
             max_tokens=500,
-            temperature=0.7,
+            temperature=0.8,  # Slightly higher temperature for more creative responses
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
         logger.error(f"Error generating AI response: {e}")
-        return "Sorry, I couldn't generate a response at the moment."
+        return "متأسفم، در حال حاضر نمی‌توانم پاسخی تولید کنم."
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle messages that mention the bot."""
@@ -52,7 +79,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
         
     message_text = update.message.text
-    bot_username = context.bot.username.lower()
+    bot_username = context.bot.username.lower() if context.bot.username else "firtigh"
     
     # Different ways the bot might be mentioned in a group
     mentions = [
@@ -76,11 +103,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
         # If there's no query after removing the mentions, ask for more information
         if not query:
-            await update.message.reply_text("You mentioned me, but didn't ask anything. How can I help?")
+            await update.message.reply_text("من رو صدا زدی، ولی سوالی نپرسیدی. چطور می‌تونم کمکت کنم؟")
             return
         
+        # Determine if the message is serious
+        is_serious = await is_serious_question(query)
+        
         # Generate and send AI response
-        ai_response = await generate_ai_response(query)
+        ai_response = await generate_ai_response(query, is_serious)
         await update.message.reply_text(ai_response)
 
 def main() -> None:
