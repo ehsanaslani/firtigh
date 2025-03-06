@@ -3,12 +3,15 @@ import logging
 import base64
 import tempfile
 import requests
+import time
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.constants import ParseMode
 import openai
 from dotenv import load_dotenv
 from io import BytesIO
+import database
+import summarizer
 
 # Load environment variables from .env file
 load_dotenv()
@@ -31,7 +34,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /help is issued."""
-    await update.message.reply_text("برای دریافت پاسخ، من رو با @firtigh در پیام خود تگ کنید.")
+    help_text = (
+        "برای استفاده از فیرتیق، به یکی از این روش‌ها عمل کنید:\n\n"
+        "1. من رو با @firtigh یا فیرتیق در پیام خود تگ کنید.\n"
+        "2. به یکی از پیام‌های من مستقیم پاسخ دهید.\n\n"
+        "*قابلیت‌های ویژه:*\n"
+        "• می‌توانید از من درخواست خلاصه گفتگوهای گروه را بکنید. مثلا بنویسید: '@firtigh خلاصه بحث‌های سه روز اخیر چیه؟'\n"
+        "• می‌توانید تصویر یا GIF ارسال کنید و نظر من را بپرسید.\n"
+        "• می‌توانید به صورت محاوره‌ای با من گفتگو کنید و سوالات مختلف بپرسید.\n\n"
+        "لطفا توجه داشته باشید که من همه پیام‌های گروه را برای قابلیت خلاصه‌سازی ذخیره می‌کنم."
+    )
+    
+    try:
+        await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
+    except Exception:
+        # Fall back to plain text if Markdown fails
+        await update.message.reply_text(help_text.replace('*', ''))
 
 async def is_serious_question(text: str) -> bool:
     """Determine if a message appears to be a serious question."""
@@ -59,6 +77,10 @@ async def generate_ai_response(prompt: str, is_serious: bool, image_data=None) -
             "از کلمات روزمره و عامیانه فارسی استفاده کنید تا پاسخ‌ها طبیعی و واقعی به نظر برسند. "
             "اگر کسی با شما بی‌ادبی کند، باید با لحنی بسیار تندتر و پر از فحش پاسخ دهید. "
             "سعی کنید مخاطب را با معادل فارسی نام او صدا بزنید (مثلا «محسن خسروی» به جای «Mohsen Khosravi»). "
+            "\n\n"
+            "شما دارای قابلیت جدید خلاصه‌سازی گفتگوهای گروه هستید. اگر کسی در مورد تاریخچه یا خلاصه گفتگوهای گروه از شما بپرسد، "
+            "باید به او بگویید که می‌تواند با پیامی مثل «@firtigh خلاصه گفتگوهای سه روز اخیر» یا «فیرتیق تاریخچه بحث‌های این هفته چیه؟» "
+            "از شما درخواست خلاصه کند."
             "\n\n"
             "از ایموجی‌های مناسب 😊 در پاسخ‌های خود استفاده کنید تا پیام‌ها زنده‌تر به نظر برسند. "
             "در صورتی که متن طولانی می‌نویسید، از فرمت‌بندی تلگرام استفاده کنید، مثلا:\n"
@@ -227,6 +249,28 @@ def escape_markdown_v2(text):
     
     return text
 
+def escape_summary_for_markdown(text):
+    """
+    Escape a summary for Markdown format, preserving intended formatting.
+    This is different from MarkdownV2 as we want to preserve *bold* and _italic_ formatting.
+    """
+    # We need to escape brackets, parentheses, etc. but not formatting characters
+    special_chars = ['[', ']', '(', ')', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    
+    # First, temporarily replace formatting indicators
+    text = text.replace('\\*', '%%%ASTERISK%%%')
+    text = text.replace('\\_', '%%%UNDERSCORE%%%')
+    
+    # Escape special characters
+    for char in special_chars:
+        text = text.replace(char, f'\\{char}')
+    
+    # Restore formatting indicators
+    text = text.replace('%%%ASTERISK%%%', '\\*')
+    text = text.replace('%%%UNDERSCORE%%%', '\\_')
+    
+    return text
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle messages that mention the bot or reply to the bot's messages."""
     # Skip processing if there's no message
@@ -234,6 +278,37 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     
     message_text = update.message.text or ""
+    chat_id = update.effective_chat.id if update.effective_chat else None
+    
+    # Store message in database for history tracking
+    if update.message.from_user and chat_id:
+        # Only store group messages (not private chats)
+        if update.effective_chat.type in ["group", "supergroup"]:
+            # Prepare message data
+            message_data = {
+                "message_id": update.message.message_id,
+                "chat_id": chat_id,
+                "sender_id": update.message.from_user.id,
+                "sender_name": update.message.from_user.username or update.message.from_user.first_name,
+                "text": message_text,
+                "date": time.time(),  # Current timestamp
+                "has_photo": bool(update.message.photo),
+                "has_animation": bool(update.message.animation),
+                "has_sticker": bool(update.message.sticker),
+                "has_document": bool(update.message.document)
+            }
+            
+            # Add sticker info if present
+            if update.message.sticker:
+                message_data["sticker_emoji"] = update.message.sticker.emoji
+            
+            # Add document info if present
+            if update.message.document:
+                message_data["document_name"] = update.message.document.file_name
+            
+            # Save to database
+            database.save_message(message_data)
+    
     bot_username = context.bot.username.lower() if context.bot.username else "firtigh"
     bot_user_id = context.bot.id
     
@@ -274,6 +349,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text("من رو صدا زدی، ولی سوالی نپرسیدی. چطور می‌تونم کمکت کنم؟ 🤔")
             return
         
+        # Check if this is a request for chat history
+        if await summarizer.is_history_request(query):
+            # Extract time period from query
+            days = await summarizer.extract_time_period(query)
+            
+            # Inform user that we're generating summary
+            await update.message.reply_chat_action("typing")
+            await update.message.reply_text(f"در حال آماده‌سازی خلاصه گفتگوهای {days} روز گذشته... ⏳")
+            
+            # Generate and send the summary
+            summary = await summarizer.generate_chat_summary(days, chat_id)
+            
+            # Try to send with Markdown formatting
+            try:
+                # Use regular Markdown for summaries to preserve formatting
+                escaped_summary = escape_summary_for_markdown(summary)
+                await update.message.reply_text(escaped_summary, parse_mode=ParseMode.MARKDOWN_V2)
+            except Exception as e:
+                logger.error(f"Error sending formatted summary: {e}")
+                # Fall back to plain text
+                await update.message.reply_text(summary)
+            
+            return
+        
+        # Continue with normal message processing for non-history requests
         # Get conversation context from reply chain
         conversation_context = await get_conversation_context(update)
         
@@ -357,6 +457,9 @@ def main() -> None:
     if not token:
         logger.error("No TELEGRAM_TOKEN environment variable found!")
         return
+
+    # Ensure database is initialized
+    database.initialize_database()
 
     # Create the Application
     application = Application.builder().token(token).build()

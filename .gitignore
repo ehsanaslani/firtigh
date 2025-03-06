@@ -32,4 +32,28 @@ env/
 .idea/
 .vscode/
 *.swp
-*.swo 
+*.swo
+
+# Data files
+data/
+*.json
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE files
+.idea/
+.vscode/
+
+# Data files
+data/
+*.json 
