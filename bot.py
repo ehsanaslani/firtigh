@@ -47,14 +47,34 @@ async def generate_ai_response(prompt: str) -> str:
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle messages that mention the bot."""
-    message_text = update.message.text
-    
-    # Check if the bot is mentioned
-    if "@@firtigh" in message_text.lower():
-        # Remove the mention to get the actual query
-        query = message_text.replace("@@firtigh", "").strip()
+    # Skip processing if there's no message text
+    if not update.message or not update.message.text:
+        return
         
-        # If there's no query after removing the mention, ask for more information
+    message_text = update.message.text
+    bot_username = context.bot.username.lower()
+    
+    # Different ways the bot might be mentioned in a group
+    mentions = [
+        f"@@firtigh",           # Original format
+        f"@{bot_username}",     # Standard @username mention
+        f"@firtigh",            # In case username is firtigh
+        "firtigh",              # Just the name
+    ]
+    
+    # Check if any form of mention is in the message (case insensitive)
+    mentioned = any(mention.lower() in message_text.lower() for mention in mentions)
+    
+    if mentioned:
+        # Log that the bot was mentioned
+        logger.info(f"Bot mentioned in message: {message_text}")
+        
+        # Remove all possible mentions to get the actual query
+        query = message_text.lower()
+        for mention in mentions:
+            query = query.replace(mention.lower(), "").strip()
+            
+        # If there's no query after removing the mentions, ask for more information
         if not query:
             await update.message.reply_text("You mentioned me, but didn't ask anything. How can I help?")
             return
@@ -77,8 +97,12 @@ def main() -> None:
     # Add handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
+    # Process all messages to check for mentions
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
+    # Log startup
+    logger.info("Bot started, waiting for messages...")
+    
     # Run the bot until the user presses Ctrl-C
     application.run_polling()
 
