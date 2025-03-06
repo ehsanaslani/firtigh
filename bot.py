@@ -72,6 +72,52 @@ async def generate_ai_response(prompt: str, is_serious: bool) -> str:
         logger.error(f"Error generating AI response: {e}")
         return "متأسفم، در حال حاضر نمی‌توانم پاسخی تولید کنم."
 
+async def get_conversation_context(update: Update, depth=3):
+    """
+    Extract conversation context from reply chains.
+    
+    Args:
+        update: The current update
+        depth: How many messages back in the reply chain to collect (default: 3)
+    
+    Returns:
+        A string containing the conversation context
+    """
+    context_messages = []
+    current_message = update.message
+    current_depth = 0
+    
+    # Process the reply chain up to specified depth
+    while current_message and current_message.reply_to_message and current_depth < depth:
+        replied_to = current_message.reply_to_message
+        
+        # Get sender info if available
+        sender_name = "someone"
+        if replied_to.from_user:
+            if replied_to.from_user.username:
+                sender_name = f"@{replied_to.from_user.username}"
+            elif replied_to.from_user.first_name:
+                sender_name = replied_to.from_user.first_name
+        
+        # Add the message to our context list
+        if replied_to.text:
+            context_messages.append(f"{sender_name}: {replied_to.text}")
+        
+        # Move up the chain to the previous message
+        current_message = replied_to
+        current_depth += 1
+    
+    # Reverse the list so it's in chronological order
+    context_messages.reverse()
+    
+    # If we have context messages, format them
+    if context_messages:
+        context_text = "سابقه گفتگو:\n" + "\n".join(context_messages) + "\n\n"
+        logger.info(f"Found conversation context: {context_text}")
+        return context_text
+    
+    return ""
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle messages that mention the bot."""
     # Skip processing if there's no message text
@@ -107,11 +153,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text("من رو صدا زدی، ولی سوالی نپرسیدی. چطور می‌تونم کمکت کنم؟")
             return
         
+        # Get conversation context from reply chain
+        conversation_context = await get_conversation_context(update)
+        
+        # Combine context with the query
+        full_prompt = f"{conversation_context}پیام کاربر: {query}"
+        
         # Determine if the message is serious
         is_serious = await is_serious_question(query)
         
         # Generate and send AI response
-        ai_response = await generate_ai_response(query, is_serious)
+        ai_response = await generate_ai_response(full_prompt, is_serious)
         await update.message.reply_text(ai_response)
 
 def main() -> None:
