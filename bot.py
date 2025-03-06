@@ -83,6 +83,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     # Different ways the bot might be mentioned in a group
     mentions = [
+        f"فیرتیق",            # In case username is firtigh
         f"@@firtigh",           # Original format
         f"@{bot_username}",     # Standard @username mention
         f"@firtigh",            # In case username is firtigh
