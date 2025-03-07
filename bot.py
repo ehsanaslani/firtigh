@@ -47,30 +47,29 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /help is issued."""
     help_text = (
-        f"برای استفاده از {BOT_NAME}، به یکی از این روش‌ها عمل کنید:\n\n"
-        f"1. من رو با @firtigh یا {BOT_NAME} در پیام خود تگ کنید.\n"
-        "2. به یکی از پیام‌های من مستقیم پاسخ دهید.\n\n"
-        "*قابلیت‌های ویژه:*\n"
-        "• *خلاصه گفتگوها*: می‌توانید از من درخواست خلاصه گفتگوهای گروه را بکنید. مثال: '@firtigh خلاصه بحث‌های سه روز اخیر چیه؟'\n"
-        "• *جستجوی اینترنتی*: با استفاده از کلماتی مثل 'جستجو'، 'سرچ' یا 'گوگل'، از من بخواهید اینترنت را جستجو کنم. مثال: '@firtigh جستجو کن آخرین اخبار ایران'\n"
-        "• *اخبار فارسی*: برای سوالات خبری، منابع خبری فارسی‌زبان در اولویت قرار می‌گیرند. مثال: '@firtigh اخبار امروز چیه؟'\n"
-        "• *تحلیل لینک*: اگر لینکی در پیام خود قرار دهید، من محتوای آن را استخراج و تحلیل می‌کنم.\n"
-        "• *تحلیل تصاویر*: می‌توانید تصویر یا GIF ارسال کنید و نظر من را بپرسید.\n"
-        "• *نرخ ارز*: می‌توانید از من قیمت دلار به تومان را بپرسید یا از دستور /dollar استفاده کنید.\n"
-        "• *محدودیت استفاده*: برای جستجوی اینترنتی و تحلیل تصاویر محدودیت روزانه وجود دارد (تنظیم‌پذیر).\n"
-        "• *گفتگوی هوشمند*: می‌توانید به صورت محاوره‌ای با من گفتگو کنید و سوالات مختلف بپرسید.\n\n"
-        "*قابلیت‌های حافظه و اطلاعاتی:*\n"
-        f"• *حافظه گروهی*: من تا {MAX_MEMORY_MESSAGES} پیام اخیر گروه را به خاطر می‌سپارم و می‌توانم از آنها در پاسخ‌هایم استفاده کنم.\n"
-        "• *پروفایل کاربران*: من علایق و ویژگی‌های کاربران را یاد می‌گیرم تا بتوانم پاسخ‌های شخصی‌سازی شده بدهم.\n"
-        "• *اطلاعات به‌روز*: قادر به جستجو و ارائه اطلاعات به‌روز از اینترنت هستم.\n"
-        "• *استخراج محتوا*: می‌توانم محتوای مفید از صفحات وب را استخراج و خلاصه کنم.\n\n"
+        f"👋 سلام {update.effective_user.first_name if update.effective_user else ''}!\n\n"
+        "من فیرتیق هستم، یک ربات هوشمند که میتونم به سوال‌های شما پاسخ بدم و در گفتگوها شرکت کنم.\n\n"
+        "*دستورات قابل استفاده:*\n"
+        "/start - شروع کار با ربات\n"
+        "/help - نمایش این راهنما\n"
+        "/dollar - دریافت نرخ دلار به ریال\n"
+        "/toman - دریافت نرخ دلار به تومان\n"
+        "/currency [ارز] [تومان] - دریافت نرخ ارز دلخواه (مثال: /currency eur)\n"
+        "/gold - دریافت قیمت طلا و سکه\n"
+        "/crypto [ارز] - دریافت قیمت ارزهای دیجیتال (مثال: /crypto btc)\n\n"
+        "*قابلیت‌های من:*\n"
+        "• پاسخ به سوالات شما به زبان فارسی \n"
+        "• جستجوی اینترنت با کلمه کلیدی \"جستجو\" یا \"search\"\n"
+        "• تشخیص و پاسخ به درخواست‌های اخبار با کلیدواژه‌هایی مثل \"اخبار\" یا \"خبر\"\n"
+        "• استخراج محتوا از لینک‌های موجود در پیام\n"
+        "• نمایش قیمت ارز، طلا، سکه و ارزهای دیجیتال\n"
+        "• درک و استفاده از تصاویر در گفتگو\n\n"
+        "*برای استفاده از من:*\n"
+        "• در چت خصوصی: پیام خود را مستقیماً بنویسید\n"
+        "• در گروه‌ها: من را با @firtigh یا @@firtigh تگ کنید\n\n"
+        "من به صورت خودکار آموزش می‌بینم و از تاریخچه گفتگوها برای ارائه پاسخ‌های بهتر استفاده می‌کنم."
     )
-    
-    try:
-        await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
-    except Exception:
-        # Fall back to plain text if Markdown fails
-        await update.message.reply_text(help_text.replace('*', ''))
+    await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
 
 async def is_serious_question(text: str) -> bool:
     """Determine if a message appears to be a serious question."""
@@ -576,7 +575,7 @@ def escape_summary_for_markdown(text):
     return text
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle messages that mention the bot or reply to the bot's messages."""
+    """Handle incoming messages."""
     # Skip processing if there's no message
     if not update.message:
         return
@@ -748,47 +747,83 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
             return
         
-        # Check if this is a request for exchange rate information
-        if is_exchange_rate_request(query):
-            await update.message.reply_chat_action("typing")
+        # Check if this is an exchange rate request
+        if exchange_rates.is_exchange_rate_request(query):
+            currency_slug = exchange_rates.detect_currency_in_query(query)
+            is_toman = "تومان" in query.lower() or "تومن" in query.lower()
             
-            # Check if they're specifically asking about toman
-            if "تومان" in query.lower():
-                await update.message.reply_text("در حال دریافت نرخ دلار به تومان... ⏳")
-                result = await exchange_rates.get_usd_toman_rate()
+            processing_message = await update.message.reply_text("در حال دریافت نرخ ارز... ⌛")
+            
+            if is_toman:
+                rate_data, error = await exchange_rates.get_currency_toman_rate(currency_slug)
+                if error:
+                    await processing_message.edit_text(f"❌ {error}")
+                    return
                 
-                if result.get("success", False):
-                    # Format the rate with commas for thousands
-                    try:
-                        rate_value = float(result.get("current_rate", "0"))
-                        formatted_rate = f"{rate_value:,.0f}"
-                        
-                        message = (
-                            f"💵 *نرخ دلار آمریکا به تومان*\n\n"
-                            f"نرخ فعلی: *{formatted_rate} تومان*\n"
-                            f"تغییرات: {result.get('change_percent', 'N/A')}\n"
-                            f"منبع: [alanchand.com]({result.get('source_url', 'https://alanchand.com/')})"
-                        )
-                        
-                        await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
-                    except Exception as e:
-                        logger.error(f"Error formatting toman rate: {e}")
-                        await update.message.reply_text(f"نرخ دلار به تومان: {result.get('current_rate', 'N/A')} تومان")
-                else:
-                    await update.message.reply_text(f"❌ خطا در دریافت نرخ دلار به تومان: {result.get('error', 'خطای نامشخص')}")
+                formatted_rate = exchange_rates.format_toman_rate(rate_data, currency_slug)
+                await processing_message.edit_text(formatted_rate)
             else:
-                # Default to rial
-                await update.message.reply_text("در حال دریافت نرخ دلار... ⏳")
-                result = await exchange_rates.get_usd_irr_rate()
-                formatted_result = exchange_rates.format_exchange_rate_result(result)
+                rate_data, error = await exchange_rates.get_currency_rate(currency_slug)
+                if error:
+                    await processing_message.edit_text(f"❌ {error}")
+                    return
                 
-                try:
-                    await update.message.reply_text(formatted_result, parse_mode=ParseMode.MARKDOWN)
-                except Exception as e:
-                    logger.error(f"Error sending exchange rate message: {e}")
-                    # Fall back to plain text if Markdown fails
-                    await update.message.reply_text(formatted_result.replace('*', '').replace('[', '').replace(']', ''))
+                formatted_rate = exchange_rates.format_currency_rate(rate_data, currency_slug)
+                await processing_message.edit_text(formatted_rate)
             
+            return
+        
+        # Check if this is about gold prices
+        elif exchange_rates.is_gold_price_request(query):
+            processing_message = await update.message.reply_text("در حال دریافت قیمت طلا و سکه... ⌛")
+            
+            # Fetch gold prices
+            gold_data, error = await exchange_rates.fetch_gold_prices()
+            
+            if error or not gold_data:
+                await processing_message.edit_text(f"❌ {error}" if error else "❌ خطا در دریافت اطلاعات قیمت طلا و سکه.")
+                return
+            
+            # Format the response
+            formatted_response = exchange_rates.format_gold_prices(gold_data)
+            
+            # Send the formatted response
+            await processing_message.edit_text(formatted_response)
+            return
+        
+        # Check if this is about cryptocurrency prices
+        elif exchange_rates.is_crypto_price_request(query):
+            processing_message = await update.message.reply_text("در حال دریافت قیمت ارزهای دیجیتال... ⌛")
+            
+            # Detect specific cryptocurrency if mentioned
+            specific_crypto = exchange_rates.detect_crypto_in_query(query)
+            
+            # Fetch crypto prices
+            crypto_data, error = await exchange_rates.fetch_crypto_prices()
+            
+            if error or not crypto_data:
+                await processing_message.edit_text(f"❌ {error}" if error else "❌ خطا در دریافت اطلاعات ارزهای دیجیتال.")
+                return
+            
+            # Filter for specific cryptocurrency if detected in query
+            if specific_crypto and 'data' in crypto_data:
+                filtered_data = {
+                    'data': [item for item in crypto_data['data'] 
+                             if item.get('symbol', '').lower() == specific_crypto.lower()],
+                    'updated_at': crypto_data.get('updated_at', 'نامشخص')
+                }
+                
+                if filtered_data['data']:
+                    formatted_response = exchange_rates.format_crypto_prices(filtered_data)
+                else:
+                    # If specific crypto not found, return all data
+                    formatted_response = exchange_rates.format_crypto_prices(crypto_data)
+            else:
+                # Format the response with all cryptocurrencies
+                formatted_response = exchange_rates.format_crypto_prices(crypto_data)
+            
+            # Send the formatted response
+            await processing_message.edit_text(formatted_response)
             return
         
         # Initialize variables for web search and link content
@@ -1007,67 +1042,216 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 await update.message.reply_text(ai_response)
 
 async def dollar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send current USD/IRR exchange rate when the command /dollar is issued."""
-    await update.message.reply_text("در حال دریافت نرخ دلار... ⏳")
-    
-    result = await exchange_rates.get_usd_irr_rate()
-    formatted_result = exchange_rates.format_exchange_rate_result(result)
-    
+    """
+    Handle /dollar command - Return current USD to IRR exchange rate
+    """
     try:
-        await update.message.reply_text(formatted_result, parse_mode=ParseMode.MARKDOWN)
+        # Send a "typing" indicator to show the bot is processing
+        await update.message.reply_chat_action("typing")
+        
+        # Get exchange rate from API
+        result = await exchange_rates.get_usd_irr_rate()
+        formatted_result = exchange_rates.format_exchange_rate_result(result)
+        
+        # Send the result
+        await update.message.reply_text(
+            formatted_result,
+            parse_mode=ParseMode.MARKDOWN
+        )
     except Exception as e:
-        logger.error(f"Error sending exchange rate message: {e}")
-        # Fall back to plain text if Markdown fails
-        await update.message.reply_text(formatted_result.replace('*', '').replace('[', '').replace(']', ''))
+        logger.error(f"Error processing dollar command: {str(e)}")
+        await update.message.reply_text(
+            f"خطا در دریافت نرخ ارز: {str(e)}",
+            parse_mode=ParseMode.MARKDOWN
+        )
 
 async def toman_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send current USD/Toman exchange rate when the command /toman is issued."""
-    await update.message.reply_text("در حال دریافت نرخ دلار به تومان... ⏳")
-    
-    result = await exchange_rates.get_usd_toman_rate()
-    
-    if result.get("success", False):
-        # Format the rate with commas for thousands
-        try:
-            rate_value = float(result.get("current_rate", "0"))
-            formatted_rate = f"{rate_value:,.0f}"
+    """
+    Handle /toman command - Return current USD to Toman exchange rate
+    """
+    try:
+        # Send a "typing" indicator to show the bot is processing
+        await update.message.reply_chat_action("typing")
+        
+        # Get exchange rate and convert to Toman
+        result = await exchange_rates.get_usd_toman_rate()
+        
+        # Format the result
+        if result.get("success", False):
+            buy_rate = result.get("buy_rate", "N/A")
+            sell_rate = result.get("sell_rate", "N/A")
             
-            message = (
+            # Format numbers with commas
+            try:
+                buy_value = float(buy_rate)
+                formatted_buy = f"{buy_value:,.0f}"
+            except (ValueError, TypeError):
+                formatted_buy = buy_rate
+                
+            try:
+                sell_value = float(sell_rate)
+                formatted_sell = f"{sell_value:,.0f}"
+            except (ValueError, TypeError):
+                formatted_sell = sell_rate
+            
+            # Create the formatted response
+            formatted_result = (
                 f"💵 *نرخ دلار آمریکا به تومان*\n\n"
-                f"نرخ فعلی: *{formatted_rate} تومان*\n"
+                f"قیمت خرید: *{formatted_buy} تومان*\n"
+                f"قیمت فروش: *{formatted_sell} تومان*\n"
                 f"تغییرات: {result.get('change_percent', 'N/A')}\n"
                 f"منبع: [alanchand.com]({result.get('source_url', 'https://alanchand.com/')})"
             )
-            
-            await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
-        except Exception as e:
-            logger.error(f"Error formatting toman rate: {e}")
-            await update.message.reply_text(f"نرخ دلار به تومان: {result.get('current_rate', 'N/A')} تومان")
-    else:
-        await update.message.reply_text(f"❌ خطا در دریافت نرخ دلار به تومان: {result.get('error', 'خطای نامشخص')}")
+        else:
+            formatted_result = f"❌ خطا در دریافت نرخ ارز: {result.get('error', 'خطای نامشخص')}"
+        
+        # Send the result
+        await update.message.reply_text(
+            formatted_result,
+            parse_mode=ParseMode.MARKDOWN
+        )
+    except Exception as e:
+        logger.error(f"Error processing toman command: {str(e)}")
+        await update.message.reply_text(
+            f"خطا در دریافت نرخ ارز: {str(e)}",
+            parse_mode=ParseMode.MARKDOWN
+        )
 
-def is_exchange_rate_request(text: str) -> bool:
+async def currency_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    Check if a message is asking about exchange rates.
-    
-    Args:
-        text: The message text to check
-        
-    Returns:
-        True if it's an exchange rate request, False otherwise
+    Handle /currency command - Return exchange rate for specified currency to IRR
+    Usage: /currency [currency_code]
+    Example: /currency eur (for Euro)
     """
-    if not text:
-        return False
+    try:
+        # Send a "typing" indicator to show the bot is processing
+        await update.message.reply_chat_action("typing")
         
-    # Keywords related to exchange rates in Persian and English
-    keywords = [
-        "نرخ دلار", "قیمت دلار", "قیمت ارز", "دلار چنده", "دلار چند شده", "دلار چقدر شده",
-        "تبدیل دلار", "تبدیل تومان", "تبدیل ریال", "ارز آمریکا", "usd", "dollar rate",
-        "دلار آمریکا", "دلار به تومان", "دلار به ریال"
-    ]
+        # Check if there's a currency code specified
+        currency_slug = "usd"  # Default to USD
+        
+        if context.args and len(context.args) > 0:
+            # The first argument should be the currency code
+            arg = context.args[0].lower()
+            # Remove any non-alphanumeric characters
+            currency_slug = ''.join(c for c in arg if c.isalnum())
+        
+        # Get exchange rate from API
+        result = await exchange_rates.get_currency_rate(currency_slug)
+        
+        # Check if we want to display in Tomans
+        use_toman = False
+        if len(context.args) > 1 and context.args[1].lower() in ["toman", "تومان", "تومن"]:
+            use_toman = True
+            result = await exchange_rates.get_currency_toman_rate(currency_slug)
+        
+        # Format and send the result
+        if use_toman:
+            # Format the result for Toman display
+            if result.get("success", False):
+                buy_rate = result.get("buy_rate", "N/A")
+                sell_rate = result.get("sell_rate", "N/A")
+                currency_name = result.get("currency_name", currency_slug.upper())
+                
+                # Format numbers with commas
+                try:
+                    buy_value = float(buy_rate)
+                    formatted_buy = f"{buy_value:,.0f}"
+                except (ValueError, TypeError):
+                    formatted_buy = buy_rate
+                    
+                try:
+                    sell_value = float(sell_rate)
+                    formatted_sell = f"{sell_value:,.0f}"
+                except (ValueError, TypeError):
+                    formatted_sell = sell_rate
+                
+                # Create the formatted response
+                formatted_result = (
+                    f"💵 *نرخ {currency_name} به تومان*\n\n"
+                    f"قیمت خرید: *{formatted_buy} تومان*\n"
+                    f"قیمت فروش: *{formatted_sell} تومان*\n"
+                    f"تغییرات: {result.get('change_percent', 'N/A')}\n"
+                    f"منبع: [alanchand.com]({result.get('source_url', 'https://alanchand.com/')})"
+                )
+            else:
+                formatted_result = f"❌ خطا در دریافت نرخ ارز: {result.get('error', 'خطای نامشخص')}"
+        else:
+            # Format the result for Rial display
+            formatted_result = exchange_rates.format_exchange_rate_result(result)
+        
+        # Send the result
+        await update.message.reply_text(
+            formatted_result,
+            parse_mode=ParseMode.MARKDOWN
+        )
+    except Exception as e:
+        logger.error(f"Error processing currency command: {str(e)}")
+        await update.message.reply_text(
+            f"خطا در دریافت نرخ ارز: {str(e)}",
+            parse_mode=ParseMode.MARKDOWN
+        )
+
+async def gold_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Command handler for /gold - Displays gold and coin prices
+    """
+    # Inform user that we're fetching data
+    message = await update.message.reply_text("در حال دریافت قیمت طلا و سکه... ⌛")
     
-    text_lower = text.lower()
-    return any(keyword in text_lower for keyword in keywords)
+    # Fetch gold prices
+    gold_data, error = await exchange_rates.fetch_gold_prices()
+    
+    if error or not gold_data:
+        await message.edit_text(f"❌ {error}" if error else "❌ خطا در دریافت اطلاعات قیمت طلا و سکه.")
+        return
+    
+    # Format the response
+    formatted_response = exchange_rates.format_gold_prices(gold_data)
+    
+    # Send the formatted response
+    await message.edit_text(formatted_response)
+
+async def crypto_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Command handler for /crypto - Displays cryptocurrency prices
+    """
+    # Inform user that we're fetching data
+    message = await update.message.reply_text("در حال دریافت قیمت ارزهای دیجیتال... ⌛")
+    
+    # Get specific cryptocurrency if provided in arguments
+    args = context.args
+    specific_crypto = None
+    
+    if args and len(args) > 0:
+        specific_crypto = exchange_rates.detect_crypto_in_query(" ".join(args))
+    
+    # Fetch crypto prices
+    crypto_data, error = await exchange_rates.fetch_crypto_prices()
+    
+    if error or not crypto_data:
+        await message.edit_text(f"❌ {error}" if error else "❌ خطا در دریافت اطلاعات ارزهای دیجیتال.")
+        return
+    
+    # Filter for specific cryptocurrency if requested
+    if specific_crypto and 'data' in crypto_data:
+        filtered_data = {
+            'data': [item for item in crypto_data['data'] 
+                     if item.get('symbol', '').lower() == specific_crypto.lower()],
+            'updated_at': crypto_data.get('updated_at', 'نامشخص')
+        }
+        
+        if not filtered_data['data']:
+            await message.edit_text(f"❌ ارز دیجیتال {specific_crypto.upper()} در داده‌های دریافتی یافت نشد.")
+            return
+        
+        formatted_response = exchange_rates.format_crypto_prices(filtered_data)
+    else:
+        # Format the response with all cryptocurrencies
+        formatted_response = exchange_rates.format_crypto_prices(crypto_data)
+    
+    # Send the formatted response
+    await message.edit_text(formatted_response)
 
 def main() -> None:
     """Start the bot."""
@@ -1098,6 +1282,9 @@ def main() -> None:
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("dollar", dollar_command))
     application.add_handler(CommandHandler("toman", toman_command))
+    application.add_handler(CommandHandler("currency", currency_command))
+    application.add_handler(CommandHandler("gold", gold_command))
+    application.add_handler(CommandHandler("crypto", crypto_command))
     # Process all messages to check for mentions
     application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
 

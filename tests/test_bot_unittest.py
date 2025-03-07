@@ -90,9 +90,19 @@ class TestBot(unittest.TestCase):
         # Check that reply_text was called with the expected message
         self.message.reply_text.assert_called_once()
         call_args = self.message.reply_text.call_args[0][0]
+        
+        # Check for various expected elements in the help text
+        self.assertIn("دستورات قابل استفاده", call_args)
+        self.assertIn("/start", call_args)
+        self.assertIn("/help", call_args)
+        self.assertIn("/dollar", call_args)
+        self.assertIn("/toman", call_args)
+        self.assertIn("/currency", call_args)
+        self.assertIn("/gold", call_args)
+        self.assertIn("/crypto", call_args)
+        self.assertIn("قابلیت", call_args)
+        self.assertIn("برای استفاده از من", call_args)
         self.assertIn("@firtigh", call_args)
-        self.assertIn(bot.BOT_NAME, call_args)  # Check for the bot name constant
-        self.assertIn(str(bot.MAX_MEMORY_MESSAGES), call_args)  # Check for memory message count
     
     @patch('memory.process_message_for_memory')
     @patch('database.save_message')

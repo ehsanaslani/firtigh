@@ -214,26 +214,32 @@ def test_message_formatting_error_handling(mock_generate_ai, mock_escape_markdow
     """Test that when message formatting fails, we still only get one response."""
     # Set up the test
     mock_update.message.text = "@firtigh tell me something"
-    
+
     # Mock generate_ai_response to return a message with formatting
     async def mock_ai_response(*args, **kwargs):
         return "Here is a *formatted* message with [link](http://example.com)"
     mock_generate_ai.side_effect = mock_ai_response
-    
+
     # Mock escape_markdown_v2 to raise an exception (simulating a formatting error)
     mock_escape_markdown.side_effect = Exception("Formatting error")
-    
+
     # Set up the context's bot username
     mock_context.bot.username = "firtigh"
     mock_context.bot.id = 12345
     
-    # Call the handler
-    run_async(bot.handle_message(mock_update, mock_context))
-    
+    # Mock processing message for crypto detection to return False
+    with patch('exchange_rates.is_crypto_price_request', return_value=False), \
+         patch('exchange_rates.is_gold_price_request', return_value=False), \
+         patch('exchange_rates.is_exchange_rate_request', return_value=False), \
+         patch('web_search.is_search_request', return_value=False):
+         
+        # Call the handler
+        run_async(bot.handle_message(mock_update, mock_context))
+
     # Check that message.reply_text was called only once (the fallback, not duplicated)
     # In this case, we expect only one call since the first attempt fails and we use the fallback
     assert mock_update.message.reply_text.call_count == 1
-    
+
     # Verify that the call is the AI response without formatting
     call_args = mock_update.message.reply_text.call_args[0][0]
     assert "Here is a" in call_args
