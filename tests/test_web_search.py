@@ -43,7 +43,12 @@ class TestWebSearch(unittest.TestCase):
     
     def run_async(self, coro):
         """Run a coroutine in the event loop."""
-        return asyncio.get_event_loop().run_until_complete(coro)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
     
     @patch("web_search.requests.get")
     @patch("usage_limits.can_use_search")
@@ -173,6 +178,70 @@ class TestWebSearch(unittest.TestCase):
         # This might contain a question indicator making it look like a search request
         result = self.run_async(web_search.is_search_request("آخرین اخبار چیه؟"))
         self.assertTrue(result)  # Now expecting True
+
+    def test_is_news_query(self):
+        """Test detection of news queries."""
+        self.assertTrue(self.run_async(web_search.is_news_query("آخرین اخبار ایران")))
+        self.assertTrue(self.run_async(web_search.is_news_query("اخبار کرونا")))
+        self.assertTrue(self.run_async(web_search.is_news_query("latest news about elections")))
+        self.assertTrue(self.run_async(web_search.is_news_query("تیتر روزنامه‌های امروز")))
+        
+        # Non-news queries
+        self.assertFalse(self.run_async(web_search.is_news_query("بهترین رستوران تهران")))
+        self.assertFalse(self.run_async(web_search.is_news_query("طرز تهیه کیک شکلاتی")))
+    
+    @patch('usage_limits.can_use_search')
+    @patch('usage_limits.increment_search_usage')
+    @patch('requests.get')
+    def test_news_query_prioritizes_persian_sites(self, mock_get, mock_increment, mock_can_search):
+        """Test that news queries prioritize Persian news sites."""
+        # Setup mocks
+        mock_can_search.return_value = True
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "items": [
+                {
+                    "title": "Test News Item",
+                    "link": "https://example.com/news",
+                    "snippet": "This is a test news item."
+                }
+            ]
+        }
+        mock_get.return_value = mock_response
+        
+        # Call with a news query
+        self.run_async(web_search.search_web("اخبار ایران"))
+        
+        # Check that the query was modified to include Persian news sites
+        call_args = mock_get.call_args[1]['params']
+        self.assertIn("site:", call_args['q'])
+        # Should have the original query and site: directives
+        self.assertIn("(اخبار ایران)", call_args['q'])
+        
+    def test_format_search_results_for_news(self):
+        """Test formatting of search results for news queries."""
+        test_results = [
+            {
+                "title": "Test News Item 1",
+                "link": "https://example.com/news/1",
+                "snippet": "This is test news item 1."
+            },
+            {
+                "title": "Test News Item 2",
+                "link": "https://example.com/news/2",
+                "snippet": "This is test news item 2."
+            }
+        ]
+        
+        # Format as regular search results
+        regular_format = web_search.format_search_results(test_results)
+        self.assertIn("*نتایج جستجو*", regular_format)
+        self.assertNotIn("آخرین اخبار", regular_format)
+        
+        # Format as news search results
+        news_format = web_search.format_search_results(test_results, is_news=True)
+        self.assertIn("*آخرین اخبار*", news_format)
+        self.assertIn("نتایج از منابع خبری فارسی‌زبان", news_format)
 
 if __name__ == "__main__":
     unittest.main() 

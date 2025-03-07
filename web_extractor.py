@@ -1,8 +1,8 @@
 import re
 import logging
-import requests
+import aiohttp
 from bs4 import BeautifulSoup
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Any
 import urllib.parse
 
 logger = logging.getLogger(__name__)
@@ -20,6 +20,8 @@ def extract_urls(text: str) -> List[str]:
     Returns:
         List of URLs found in the text
     """
+    if not text:
+        return []
     return re.findall(URL_PATTERN, text)
 
 async def extract_content_from_url(url: str, max_chars: int = 2000) -> Tuple[str, str]:
@@ -34,15 +36,20 @@ async def extract_content_from_url(url: str, max_chars: int = 2000) -> Tuple[str
         Tuple of (title, content) from the webpage
     """
     try:
-        # Get the webpage
+        # Get the webpage using aiohttp
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()  # Raise exception for 4XX/5XX status codes
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, timeout=10) as response:
+                if response.status != 200:
+                    return f"Error: HTTP {response.status}", f"Could not fetch content from {url}"
+                
+                html = await response.text()
         
         # Parse the HTML
-        soup = BeautifulSoup(response.content, 'html.parser')
+        soup = BeautifulSoup(html, 'html.parser')
         
         # Get the title
         title = soup.title.string if soup.title else "No title found"
@@ -94,36 +101,41 @@ def is_valid_url(url: str) -> bool:
     except Exception:
         return False
 
-async def process_message_links(message_text: str) -> Optional[str]:
+async def process_message_links(message_text: str) -> str:
     """
-    Process links in a message and extract their content.
+    Automatically extract and process all links in a message.
     
     Args:
-        message_text: The message text containing URLs
-    
+        message_text: The message text to process
+        
     Returns:
-        Extracted content from the links, or None if no valid links found
+        Formatted string with extracted content from all links
     """
+    if not message_text:
+        return ""
+        
     urls = extract_urls(message_text)
     
     if not urls:
-        return None
+        return ""
     
-    # Process up to 2 URLs to avoid overloading the context
-    valid_urls = [url for url in urls[:2] if is_valid_url(url)]
+    results = []
     
-    if not valid_urls:
-        return None
+    for url in urls:
+        try:
+            if not is_valid_url(url):
+                continue
+                
+            title, content = await extract_content_from_url(url)
+            
+            # Add the extracted information to results
+            results.append(f"📄 **{title}**\n{url}\n\n{content[:500]}...\n")
+        except Exception as e:
+            logger.error(f"Error processing link {url}: {e}")
+            results.append(f"❌ Failed to process {url}: {str(e)}")
     
-    extracted_content = []
+    if not results:
+        return ""
     
-    for url in valid_urls:
-        title, content = await extract_content_from_url(url)
-        if content and content != "Error":
-            extracted_content.append(f"Content from [{title}]({url}):\n\n{content}\n\n")
-    
-    if extracted_content:
-        result = "📄 *محتوای لینک‌های ارسال شده:*\n\n" + "".join(extracted_content)
-        return result
-    
-    return None 
+    # Combine all results into a formatted string
+    return "محتوای لینک‌های ارسالی:\n\n" + "\n---\n".join(results) 

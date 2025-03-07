@@ -4,6 +4,7 @@ import base64
 import tempfile
 import requests
 import time
+import datetime
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.constants import ParseMode
@@ -15,6 +16,8 @@ import summarizer
 import web_search
 import web_extractor
 import usage_limits
+import memory
+import exchange_rates  # Import the new exchange_rates module
 
 # Load environment variables from .env file
 load_dotenv()
@@ -42,12 +45,21 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "1. من رو با @firtigh یا فیرتیق در پیام خود تگ کنید.\n"
         "2. به یکی از پیام‌های من مستقیم پاسخ دهید.\n\n"
         "*قابلیت‌های ویژه:*\n"
-        "• می‌توانید از من درخواست خلاصه گفتگوهای گروه را بکنید. مثلا بنویسید: '@firtigh خلاصه بحث‌های سه روز اخیر چیه؟'\n"
-        "• می‌توانید با استفاده از کلماتی مثل 'جستجو' یا 'سرچ'، از من بخواهید اینترنت را جستجو کنم.\n"
-        "• اگر لینکی در پیام خود قرار دهید، من محتوای آن را استخراج و تحلیل می‌کنم.\n"
-        "• می‌توانید تصویر یا GIF ارسال کنید و نظر من را بپرسید.\n"
-        "• می‌توانید به صورت محاوره‌ای با من گفتگو کنید و سوالات مختلف بپرسید.\n\n"
-        "لطفا توجه داشته باشید که من همه پیام‌های گروه را برای قابلیت خلاصه‌سازی ذخیره می‌کنم."
+        "• *خلاصه گفتگوها*: می‌توانید از من درخواست خلاصه گفتگوهای گروه را بکنید. مثال: '@firtigh خلاصه بحث‌های سه روز اخیر چیه؟'\n"
+        "• *جستجوی اینترنتی*: با استفاده از کلماتی مثل 'جستجو'، 'سرچ' یا 'گوگل'، از من بخواهید اینترنت را جستجو کنم. مثال: '@firtigh جستجو کن آخرین اخبار ایران'\n"
+        "• *اخبار فارسی*: برای سوالات خبری، منابع خبری فارسی‌زبان در اولویت قرار می‌گیرند. مثال: '@firtigh اخبار امروز چیه؟'\n"
+        "• *تحلیل لینک*: اگر لینکی در پیام خود قرار دهید، من محتوای آن را استخراج و تحلیل می‌کنم.\n"
+        "• *تحلیل تصاویر*: می‌توانید تصویر یا GIF ارسال کنید و نظر من را بپرسید.\n"
+        "• *نرخ ارز*: می‌توانید از من قیمت دلار به تومان را بپرسید یا از دستور /dollar استفاده کنید.\n"
+        "• *محدودیت استفاده*: برای جستجوی اینترنتی و تحلیل تصاویر محدودیت روزانه وجود دارد (تنظیم‌پذیر).\n"
+        "• *حریم خصوصی*: اطلاعات و مکالمات هر گروه کاملاً از گروه‌های دیگر جدا نگهداری می‌شود.\n"
+        "• *گفتگوی هوشمند*: می‌توانید به صورت محاوره‌ای با من گفتگو کنید و سوالات مختلف بپرسید.\n\n"
+        "*قابلیت‌های حافظه و اطلاعاتی:*\n"
+        "• *حافظه گروهی*: من مکالمات مهم گروه را به خاطر می‌سپارم و می‌توانم از آنها در پاسخ‌هایم استفاده کنم.\n"
+        "• *پروفایل کاربران*: من علایق و ویژگی‌های کاربران را یاد می‌گیرم تا بتوانم پاسخ‌های شخصی‌سازی شده بدهم.\n"
+        "• *اطلاعات به‌روز*: قادر به جستجو و ارائه اطلاعات به‌روز از اینترنت هستم.\n"
+        "• *استخراج محتوا*: می‌توانم محتوای مفید از صفحات وب را استخراج و خلاصه کنم.\n\n"
+        "لطفا توجه داشته باشید که من پیام‌های گروه را برای قابلیت خلاصه‌سازی و حافظه گروهی ذخیره می‌کنم."
     )
     
     try:
@@ -70,7 +82,7 @@ async def is_serious_question(text: str) -> bool:
             
     return False
 
-async def generate_ai_response(prompt: str, is_serious: bool, image_data=None, search_results=None, web_content=None) -> str:
+async def generate_ai_response(prompt: str, is_serious: bool, image_data=None, search_results=None, web_content=None, chat_id=None, user_id=None, additional_images=None) -> str:
     """Generate a response using OpenAI's API."""
     try:
         # Prepare system message content about capabilities
@@ -81,6 +93,23 @@ async def generate_ai_response(prompt: str, is_serious: bool, image_data=None, s
             "همچنین می‌توانید اینترنت را جستجو کنید و محتوای لینک‌های ارسالی را تحلیل کنید. "
             "کاربر می‌تواند با کلماتی مثل «جستجو کن» یا «سرچ» از شما بخواهد اطلاعاتی را از اینترنت پیدا کنید."
         )
+        
+        # Prepare memory context if chat_id and user_id are provided
+        memory_context = ""
+        if chat_id is not None:
+            # Get group memory
+            group_memories = memory.get_group_memory(chat_id)
+            if group_memories:
+                formatted_memory = memory.format_memory_for_context(group_memories)
+                memory_context += f"\n\n{formatted_memory}"
+        
+        # Add user profile if available
+        user_profile_context = ""
+        if user_id is not None:
+            user_profile = memory.get_user_profile(user_id)
+            if user_profile:
+                formatted_profile = memory.format_user_profile_for_context(user_profile)
+                user_profile_context += f"\n\n{formatted_profile}"
         
         # Set the system message based on whether the query is serious
         system_message = (
@@ -100,6 +129,14 @@ async def generate_ai_response(prompt: str, is_serious: bool, image_data=None, s
             "- برای [لینک‌ها](URL) از فرمت مارک‌داون استفاده کنید\n"
         )
         
+        # Add memory context to system message if available
+        if memory_context:
+            system_message += f"\n\n{memory_context}"
+        
+        # Add user profile context to system message if available
+        if user_profile_context:
+            system_message += f"\n\n{user_profile_context}"
+        
         # Add humor instruction for non-serious messages
         if not is_serious:
             system_message += (
@@ -114,26 +151,51 @@ async def generate_ai_response(prompt: str, is_serious: bool, image_data=None, s
             {"role": "system", "content": system_message},
         ]
         
-        # Handle image data if available
-        if image_data:
-            # Use GPT-4 Vision model
+        # Determine if we need to use the vision model
+        needs_vision_model = image_data is not None or (additional_images and len(additional_images) > 0)
+        
+        if needs_vision_model:
+            # We need to use the vision model
+            content_items = [{"type": "text", "text": prompt}]
+            
+            # Add the current message image if available
+            if image_data:
+                content_items.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{image_data}"
+                    }
+                })
+            
+            # Add additional images from the conversation context
+            if additional_images:
+                for img in additional_images:
+                    if img.get("data"):
+                        content_items.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{img['data']}"
+                            }
+                        })
+            
             messages.append({
                 "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{image_data}"
-                        }
-                    }
-                ]
+                "content": content_items
             })
+            
             model = "gpt-4o"  # Use model that supports vision
         else:
             # Text-only query
             messages.append({"role": "user", "content": prompt})
-            model = "gpt-4o-mini"
+            
+            # Choose model based on complexity
+            # Use a simpler model for basic queries to save costs
+            if is_simple_query(prompt) and not memory_context and not user_profile_context:
+                model = "gpt-3.5-turbo"
+                logger.info(f"Using cheaper model (gpt-3.5-turbo) for simple query")
+            else:
+                model = "gpt-4o-mini"
+                logger.info(f"Using standard model (gpt-4o-mini) for complex query")
         
         # Add additional context if available
         additional_context = ""
@@ -161,18 +223,106 @@ async def generate_ai_response(prompt: str, is_serious: bool, image_data=None, s
         logger.error(f"Error generating AI response: {e}")
         return "متأسفم، در حال حاضر نمی‌توانم پاسخی تولید کنم. 😔"
 
-async def get_conversation_context(update: Update, depth=3):
+def is_simple_query(prompt: str) -> bool:
     """
-    Extract conversation context from reply chains.
+    Determine if a query is simple enough to use the cheaper model.
+    
+    Args:
+        prompt: The user's query/prompt
+    
+    Returns:
+        True if the query is simple, False otherwise
+    """
+    # Simple queries are typically short
+    if len(prompt) < 50:
+        return True
+    
+    # Simple queries typically don't contain multiple questions
+    if prompt.count("?") + prompt.count("؟") > 1:
+        return False
+    
+    # Simple queries typically don't request detailed analysis
+    complex_terms = [
+        "analyze", "explain", "discuss", "compare", "contrast", "evaluate",
+        "تحلیل", "توضیح", "شرح", "مقایسه", "ارزیابی", "بررسی"
+    ]
+    
+    for term in complex_terms:
+        if term in prompt.lower():
+            return False
+    
+    return True
+
+async def extract_media_info(message, context):
+    """
+    Extract media information from a message.
+    
+    Args:
+        message: The message to extract media from
+        context: The telegram context for file downloads
+    
+    Returns:
+        Tuple of (media_type, media_description, media_data)
+    """
+    media_type = None
+    media_description = ""
+    media_data = None
+    
+    try:
+        # Check for photos
+        if message.photo:
+            media_type = "photo"
+            media_description = "[تصویر]"
+            # Get the largest photo (last in the array)
+            photo = message.photo[-1]
+            media_data = await download_telegram_file(photo.file_id, context)
+            
+        # Check for animations/GIFs
+        elif message.animation:
+            media_type = "animation"
+            media_description = "[GIF/انیمیشن]"
+            # Try to get a thumbnail or the animation itself
+            if message.animation.thumbnail:
+                media_data = await download_telegram_file(message.animation.thumbnail.file_id, context)
+            else:
+                media_data = await download_telegram_file(message.animation.file_id, context)
+                
+        # Check for stickers
+        elif message.sticker:
+            media_type = "sticker"
+            emoji = message.sticker.emoji or ""
+            media_description = f"[استیکر {emoji}]"
+            if message.sticker.thumbnail:
+                media_data = await download_telegram_file(message.sticker.thumbnail.file_id, context)
+            else:
+                media_data = await download_telegram_file(message.sticker.file_id, context)
+                
+        # Check for documents/files
+        elif message.document:
+            media_type = "document"
+            file_name = message.document.file_name or "فایل"
+            media_description = f"[فایل: {file_name}]"
+            # We don't download documents, just mention them
+    
+    except Exception as e:
+        logger.error(f"Error extracting media info: {e}")
+    
+    return (media_type, media_description, media_data)
+
+async def get_conversation_context(update: Update, context: ContextTypes.DEFAULT_TYPE, depth=3):
+    """
+    Extract conversation context from reply chains, including images.
     
     Args:
         update: The current update
+        context: The telegram context for file downloads
         depth: How many messages back in the reply chain to collect (default: 3)
     
     Returns:
-        A string containing the conversation context
+        Tuple of (context_text, media_data_list)
     """
     context_messages = []
+    media_data_list = []
     current_message = update.message
     current_depth = 0
     
@@ -188,6 +338,17 @@ async def get_conversation_context(update: Update, depth=3):
             elif replied_to.from_user.first_name:
                 sender_name = replied_to.from_user.first_name
         
+        # Extract media information
+        media_type, media_description, media_data = await extract_media_info(replied_to, context)
+        
+        # If media data was extracted, add it to our list
+        if media_data:
+            media_data_list.append({
+                "type": media_type,
+                "data": media_data,
+                "sender": sender_name
+            })
+        
         # Capture message content with rich context
         message_content = ""
         
@@ -195,23 +356,9 @@ async def get_conversation_context(update: Update, depth=3):
         if replied_to.text:
             message_content += replied_to.text
         
-        # Photo content
-        if replied_to.photo:
-            message_content += " [این پیام شامل یک تصویر است]"
-        
-        # Animation/GIF content
-        if replied_to.animation:
-            message_content += " [این پیام شامل یک GIF/انیمیشن است]"
-        
-        # Sticker content
-        if replied_to.sticker:
-            emoji = replied_to.sticker.emoji or ""
-            message_content += f" [استیکر {emoji}]"
-        
-        # Document/File content
-        if replied_to.document:
-            file_name = replied_to.document.file_name or "فایل"
-            message_content += f" [فایل: {file_name}]"
+        # Add media description if available
+        if media_description:
+            message_content += f" {media_description}"
             
         # Add the message to our context list if it has content
         if message_content:
@@ -229,9 +376,29 @@ async def get_conversation_context(update: Update, depth=3):
                 elif replied_to.from_user.first_name:
                     sender_name = replied_to.from_user.first_name
             
-            # Add the message to our context list
+            # Extract media information from this message too
+            media_type, media_description, media_data = await extract_media_info(replied_to, context)
+            
+            # If media data was extracted, add it to our list
+            if media_data:
+                media_data_list.append({
+                    "type": media_type,
+                    "data": media_data,
+                    "sender": sender_name
+                })
+            
+            # Add text content to context messages
+            message_content = ""
             if replied_to.text:
-                context_messages.append(f"{sender_name}: {replied_to.text}")
+                message_content += replied_to.text
+            
+            # Add media description if available
+            if media_description:
+                message_content += f" {media_description}"
+                
+            # Add the message to our context list if it has content
+            if message_content:
+                context_messages.append(f"{sender_name}: {message_content}")
             
             # Move up the chain to the previous message
             current_message = replied_to
@@ -239,14 +406,15 @@ async def get_conversation_context(update: Update, depth=3):
     
     # Reverse the list so it's in chronological order
     context_messages.reverse()
+    media_data_list.reverse()
     
     # If we have context messages, format them
     if context_messages:
         context_text = "سابقه گفتگو:\n" + "\n".join(context_messages) + "\n\n"
         logger.info(f"Found conversation context: {context_text}")
-        return context_text
+        return context_text, media_data_list
     
-    return ""
+    return "", []
 
 async def download_telegram_file(file_id, context):
     """Download a Telegram file and convert it to base64."""
@@ -323,6 +491,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 "has_document": bool(update.message.document)
             }
             
+            # Check for images in the message
+            if update.message.photo:
+                # Get the highest resolution photo
+                photo = update.message.photo[-1]
+                file = await context.bot.get_file(photo.file_id)
+                
+                # Store image information in the message data
+                image_data = {
+                    "file_id": photo.file_id,
+                    "file_unique_id": photo.file_unique_id,
+                    "width": photo.width,
+                    "height": photo.height,
+                    "file_path": file.file_path
+                }
+                
+                # Add image data to the message being stored
+                message_data["has_image"] = True
+                message_data["image_data"] = image_data
+            
             # Add sticker info if present
             if update.message.sticker:
                 message_data["sticker_emoji"] = update.message.sticker.emoji
@@ -333,6 +520,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
             # Save to database
             database.save_message(message_data)
+            
+            # Process for memory and user profiles
+            # We use asyncio.create_task to process in the background without delaying response
+            import asyncio
+            asyncio.create_task(memory.process_message_for_memory(message_data))
     
     bot_username = context.bot.username.lower() if context.bot.username else "firtigh"
     bot_user_id = context.bot.id
@@ -398,12 +590,62 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
             return
         
+        # Check if this is a request for exchange rate information
+        if is_exchange_rate_request(query):
+            await update.message.reply_chat_action("typing")
+            
+            # Check if they're specifically asking about toman
+            if "تومان" in query.lower():
+                await update.message.reply_text("در حال دریافت نرخ دلار به تومان... ⏳")
+                result = await exchange_rates.get_usd_toman_rate()
+                
+                if result.get("success", False):
+                    # Format the rate with commas for thousands
+                    try:
+                        rate_value = float(result.get("current_rate", "0"))
+                        formatted_rate = f"{rate_value:,.0f}"
+                        
+                        message = (
+                            f"💵 *نرخ دلار آمریکا به تومان*\n\n"
+                            f"نرخ فعلی: *{formatted_rate} تومان*\n"
+                            f"تغییرات: {result.get('change_percent', 'N/A')}\n"
+                            f"منبع: [tgju.org]({result.get('source_url', 'https://www.tgju.org')})"
+                        )
+                        
+                        await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
+                    except Exception as e:
+                        logger.error(f"Error formatting toman rate: {e}")
+                        await update.message.reply_text(f"نرخ دلار به تومان: {result.get('current_rate', 'N/A')} تومان")
+                else:
+                    await update.message.reply_text(f"❌ خطا در دریافت نرخ دلار به تومان: {result.get('error', 'خطای نامشخص')}")
+            else:
+                # Default to rial
+                await update.message.reply_text("در حال دریافت نرخ دلار... ⏳")
+                result = await exchange_rates.get_usd_irr_rate()
+                formatted_result = exchange_rates.format_exchange_rate_result(result)
+                
+                try:
+                    await update.message.reply_text(formatted_result, parse_mode=ParseMode.MARKDOWN)
+                except Exception as e:
+                    logger.error(f"Error sending exchange rate message: {e}")
+                    # Fall back to plain text if Markdown fails
+                    await update.message.reply_text(formatted_result.replace('*', '').replace('[', '').replace(']', ''))
+            
+            return
+        
         # Initialize variables for web search and link content
         search_results = None
         web_content = None
         
         # Check if this is a search request
         if await web_search.is_search_request(query):
+            # Check if we've reached daily search limit
+            if not usage_limits.can_perform_search():
+                await update.message.reply_text(
+                    "متأسفانه به محدودیت روزانه جستجوی اینترنت رسیده‌ایم. لطفا فردا دوباره امتحان کنید. 🔍"
+                )
+                return
+                
             # Extract search query (remove search command keywords)
             search_keywords = ["جستجو", "search", "بگرد", "پیدا کن", "سرچ", "گوگل", "google"]
             search_query = query
@@ -416,23 +658,37 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
             # Inform user that we're searching
             await update.message.reply_chat_action("typing")
-            await update.message.reply_text(f"در حال جستجوی اینترنت برای: «{search_query}» 🔍")
+            
+            # Check if it's a news query
+            is_news_search = await web_search.is_news_query(search_query)
+            if is_news_search:
+                await update.message.reply_text(f"در حال جستجوی اخبار برای: «{search_query}» در منابع خبری فارسی 📰")
+            else:
+                await update.message.reply_text(f"در حال جستجوی اینترنت برای: «{search_query}» 🔍")
             
             # Perform the search
             search_result_data = await web_search.search_web(search_query)
-            search_results = web_search.format_search_results(search_result_data)
+            search_results = web_search.format_search_results(search_result_data, is_news=is_news_search)
+            
+            # Increment search usage count
+            usage_limits.increment_search_usage()
         
         # Process links in the message
         if message_text:
+            logger.info("Checking for links in message")
             web_content = await web_extractor.process_message_links(message_text)
+            if web_content:
+                logger.info(f"Found and processed links in message. Content length: {len(web_content)}")
         
         # Continue with normal message processing
         # Get conversation context from reply chain
-        conversation_context = await get_conversation_context(update)
+        conversation_context, media_data_list = await get_conversation_context(update, context)
         
         # Get sender info for the bot to address the user appropriately
         sender_info = ""
+        user_id = None
         if update.message.from_user:
+            user_id = update.message.from_user.id
             sender_name = ""
             # First try to get username
             if update.message.from_user.username:
@@ -508,9 +764,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Determine if the message is serious
         is_serious = await is_serious_question(query if query else "")
         
-        # Generate and send AI response
+        # Log media info
+        if has_media or (media_data_list and len(media_data_list) > 0):
+            logger.info(f"Processing message with media. Current image: {bool(image_data)}, Context images: {len(media_data_list)}")
+        
+        # Extract media data from the media_data_list
+        additional_images = None
+        if media_data_list and len(media_data_list) > 0:
+            additional_images = media_data_list
+        
+        # Generate and send AI response - now with chat_id and user_id for memory
         await update.message.reply_chat_action("typing")
-        ai_response = await generate_ai_response(full_prompt, is_serious, image_data, search_results, web_content)
+        ai_response = await generate_ai_response(
+            full_prompt, 
+            is_serious, 
+            image_data, 
+            search_results, 
+            web_content, 
+            chat_id, 
+            user_id, 
+            additional_images
+        )
         
         # Try to send with Markdown formatting, but fall back to plain text if there's an error
         try:
@@ -525,7 +799,71 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         except Exception as e:
             logger.error(f"Error sending formatted message: {e}")
             # Fall back to plain text with no formatting
-            await update.message.reply_text(ai_response)
+        await update.message.reply_text(ai_response)
+
+async def dollar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send current USD/IRR exchange rate when the command /dollar is issued."""
+    await update.message.reply_text("در حال دریافت نرخ دلار... ⏳")
+    
+    result = await exchange_rates.get_usd_irr_rate()
+    formatted_result = exchange_rates.format_exchange_rate_result(result)
+    
+    try:
+        await update.message.reply_text(formatted_result, parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        logger.error(f"Error sending exchange rate message: {e}")
+        # Fall back to plain text if Markdown fails
+        await update.message.reply_text(formatted_result.replace('*', '').replace('[', '').replace(']', ''))
+
+async def toman_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send current USD/Toman exchange rate when the command /toman is issued."""
+    await update.message.reply_text("در حال دریافت نرخ دلار به تومان... ⏳")
+    
+    result = await exchange_rates.get_usd_toman_rate()
+    
+    if result.get("success", False):
+        # Format the rate with commas for thousands
+        try:
+            rate_value = float(result.get("current_rate", "0"))
+            formatted_rate = f"{rate_value:,.0f}"
+            
+            message = (
+                f"💵 *نرخ دلار آمریکا به تومان*\n\n"
+                f"نرخ فعلی: *{formatted_rate} تومان*\n"
+                f"تغییرات: {result.get('change_percent', 'N/A')}\n"
+                f"منبع: [tgju.org]({result.get('source_url', 'https://www.tgju.org')})\n"
+                f"زمان به‌روزرسانی: {datetime.datetime.fromisoformat(result.get('timestamp', datetime.datetime.now().isoformat())).strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+            
+            await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
+        except Exception as e:
+            logger.error(f"Error formatting toman rate: {e}")
+            await update.message.reply_text(f"نرخ دلار به تومان: {result.get('current_rate', 'N/A')} تومان")
+    else:
+        await update.message.reply_text(f"❌ خطا در دریافت نرخ دلار به تومان: {result.get('error', 'خطای نامشخص')}")
+
+def is_exchange_rate_request(text: str) -> bool:
+    """
+    Check if a message is asking about exchange rates.
+    
+    Args:
+        text: The message text to check
+        
+    Returns:
+        True if it's an exchange rate request, False otherwise
+    """
+    if not text:
+        return False
+        
+    # Keywords related to exchange rates in Persian and English
+    keywords = [
+        "نرخ دلار", "قیمت دلار", "قیمت ارز", "دلار چنده", "دلار چند شده", "دلار چقدر شده",
+        "تبدیل دلار", "تبدیل تومان", "تبدیل ریال", "ارز آمریکا", "usd", "dollar rate",
+        "دلار آمریکا", "دلار به تومان", "دلار به ریال"
+    ]
+    
+    text_lower = text.lower()
+    return any(keyword in text_lower for keyword in keywords)
 
 def main() -> None:
     """Start the bot."""
@@ -537,6 +875,9 @@ def main() -> None:
 
     # Ensure database is initialized
     database.initialize_database()
+    
+    # Initialize memory
+    memory.initialize_memory()
 
     # Create the Application
     application = Application.builder().token(token).build()
@@ -544,12 +885,14 @@ def main() -> None:
     # Add handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("dollar", dollar_command))
+    application.add_handler(CommandHandler("toman", toman_command))
     # Process all messages to check for mentions
     application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
 
     # Log startup
     logger.info("Bot started, waiting for messages...")
-    
+
     # Run the bot until the user presses Ctrl-C
     application.run_polling()
 

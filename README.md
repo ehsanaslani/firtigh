@@ -8,10 +8,13 @@ Firtigh is a Telegram bot that uses AI to generate responses when mentioned in a
 - Generates AI-powered responses using OpenAI's GPT model
 - Summarizes chat history from group discussions
 - Searches the web for real-time information
+- Prioritizes Persian news sources for news-related queries
 - Extracts and analyzes content from shared links
 - Processes and analyzes images and GIFs
 - Uses Persian language with customizable personality
-- Easy to deploy and configure
+- Maintains strict isolation between different chat groups
+- Enforces configurable usage limits for search and media
+- Easy to deploy and configure on multiple platforms
 
 ## Prerequisites
 
@@ -77,6 +80,8 @@ For production deployment, you can use a service like Heroku, AWS, or DigitalOce
 
 #### Heroku Deployment
 
+##### Using Bash (Linux/Mac)
+
 1. Install the [Heroku CLI](https://devcenter.heroku.com/articles/heroku-cli)
 2. Log in to Heroku:
 
@@ -96,26 +101,65 @@ heroku create firtigh-bot
 worker: python bot.py
 ```
 
-5. Set environment variables:
+5. Set environment variables using the provided script:
 
 ```bash
-heroku config:set TELEGRAM_TOKEN=your_telegram_bot_token
-heroku config:set OPENAI_API_KEY=your_openai_api_key
-heroku config:set GOOGLE_API_KEY=your_google_api_key
-heroku config:set GOOGLE_SEARCH_ENGINE_ID=your_search_engine_id
-heroku config:set DAILY_SEARCH_LIMIT=50
-heroku config:set DAILY_MEDIA_LIMIT=10
+# Make sure the script is executable
+chmod +x update_heroku_config.sh
+
+# Run the script
+./update_heroku_config.sh
 ```
 
-6. Deploy to Heroku:
+6. Deploy to Heroku with the included script:
 
 ```bash
-git push heroku main
+./deploy.sh "Initial deployment"
 ```
 
 7. Start the worker:
 
 ```bash
+heroku ps:scale worker=1
+```
+
+##### Using PowerShell (Windows)
+
+1. Install the [Heroku CLI](https://devcenter.heroku.com/articles/heroku-cli)
+2. Log in to Heroku:
+
+```powershell
+heroku login
+```
+
+3. Create a new Heroku app:
+
+```powershell
+heroku create firtigh-bot
+```
+
+4. Add a `Procfile` to the repository:
+
+```
+worker: python bot.py
+```
+
+5. Set environment variables using the provided script:
+
+```powershell
+# Run the script
+.\update_heroku_config.ps1
+```
+
+6. Deploy to Heroku with the included script:
+
+```powershell
+.\deploy.ps1 -CommitMessage "Initial deployment"
+```
+
+7. Start the worker:
+
+```powershell
 heroku ps:scale worker=1
 ```
 
@@ -141,6 +185,11 @@ heroku ps:scale worker=1
 - **Web Search**: Ask the bot to search the internet for information
   - Example: "@@firtigh جستجو کن آخرین اخبار ایران" (Search for the latest news about Iran)
   - Use keywords like "جستجو", "search", "سرچ", or "گوگل" to trigger a search
+  - Daily search limits prevent excessive usage
+
+- **Persian News Prioritization**: When asking about news, the bot prioritizes Persian news sources
+  - Example: "@@firtigh اخبار امروز چیه؟" (What's today's news?)
+  - Sources include BBC Persian, Euronews Persian, Iran International, and more
 
 - **Link Analysis**: Send a URL and the bot will extract and analyze its content
   - Example: "@@firtigh نظرت در مورد این مقاله چیه؟ https://example.com/article"
@@ -148,6 +197,15 @@ heroku ps:scale worker=1
 
 - **Image and GIF Analysis**: Send media with your query and the bot will analyze it
   - Example: Send an image and ask "@@firtigh این عکس چیه؟" (What is this picture?)
+  - Daily media processing limits prevent excessive usage
+  
+- **Usage Limits**: The bot enforces daily limits on resource-intensive operations
+  - Web searches and media processing are limited to configurable daily quotas
+  - Limits reset every 24 hours
+  
+- **Group Isolation**: Each group's conversations and memories are completely isolated
+  - Information from one group is never leaked to other groups
+  - Maintains privacy and context separation between different communities
   
 - **Persian Language Support**: The bot is optimized for Persian language interactions
   - Will try to address users by the Persian equivalent of their names
@@ -216,24 +274,6 @@ Alternatively, you can use the convenience script:
 python run_tests.py
 ```
 
-#### Running with unittest
-
-If you prefer the unittest framework or have issues with pytest, you can use the unittest-based tests:
-
-```bash
-# Run all tests with unittest
-python -m unittest discover tests
-
-# Run a specific test file
-python -m unittest tests/test_bot_unittest.py
-```
-
-Or use the convenience script:
-
-```bash
-python run_unittest_tests.py
-```
-
 ### Test Coverage
 
 The tests cover the following functionality:
@@ -241,6 +281,13 @@ The tests cover the following functionality:
 1. Command handlers (/start, /help)
 2. Message handling with and without bot mentions
 3. AI response generation with both success and error cases
+4. Web search and Persian news prioritization
+5. Link extraction and content analysis
+6. Image processing and analysis
+7. Memory and conversation history functionality
+8. Usage limits enforcement
+9. Group isolation and privacy protection
+10. Exchange rate information retrieval
 
 ### Adding More Tests
 

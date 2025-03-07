@@ -42,6 +42,7 @@ data/
 deploy.sh
 update_heroku_config.sh
 *.sh
+*.ps1
 
 # Distribution / packaging
 dist/

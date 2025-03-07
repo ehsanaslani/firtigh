@@ -15,6 +15,40 @@ logger = logging.getLogger(__name__)
 SEARCH_ENGINE_ID = os.getenv("GOOGLE_SEARCH_ENGINE_ID")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
+# Persian news sources to prioritize
+PERSIAN_NEWS_SOURCES = [
+    "bbc.com/persian",
+    "bbcpersian.com",
+    "euronews.com/persian",
+    "iranintl.com",
+    "radiofarda.com",
+    "dw.com/fa-ir",
+    "irna.ir",
+    "isna.ir",
+    "mehrnews.com",
+    "khabaronline.ir",
+    "farsnews.ir"
+]
+
+async def is_news_query(query: str) -> bool:
+    """
+    Check if a query is related to news.
+    
+    Args:
+        query: The search query
+        
+    Returns:
+        True if it's a news query, False otherwise
+    """
+    news_indicators = [
+        "اخبار", "news", "خبر", "رویداد", "حوادث", "رسانه", "media",
+        "headlines", "تیتر", "گزارش", "report", "روزنامه", "newspaper",
+        "اتفاقات", "events", "تازه‌ترین", "latest", "جدیدترین"
+    ]
+    
+    query_lower = query.lower()
+    return any(indicator in query_lower for indicator in news_indicators)
+
 async def search_web(query: str, num_results: int = 5) -> List[Dict[str, str]]:
     """
     Search the web using Google Custom Search API.
@@ -52,6 +86,15 @@ async def search_web(query: str, num_results: int = 5) -> List[Dict[str, str]]:
             "num": num_results
         }
         
+        # For news queries, prioritize Persian news sources
+        is_news = await is_news_query(query)
+        if is_news:
+            logger.info(f"Detected news query: {query}, prioritizing Persian news sources")
+            # Add Persian news sites to the query for news-related searches
+            # This creates a biased query that will prioritize these sites
+            persian_sites_query = " OR ".join([f"site:{site}" for site in PERSIAN_NEWS_SOURCES[:5]])
+            params["q"] = f"({query}) ({persian_sites_query})"
+        
         # Make the request
         response = requests.get(url, params=params)
         results = response.json()
@@ -66,6 +109,21 @@ async def search_web(query: str, num_results: int = 5) -> List[Dict[str, str]]:
                     "snippet": item.get("snippet", "No description")
                 })
         
+        # For news queries with no results, try again without Persian site restrictions
+        if is_news and not formatted_results:
+            logger.info("No results from Persian news sources, trying general search")
+            params["q"] = query
+            response = requests.get(url, params=params)
+            results = response.json()
+            
+            if "items" in results:
+                for item in results["items"]:
+                    formatted_results.append({
+                        "title": item.get("title", "No title"),
+                        "link": item.get("link", ""),
+                        "snippet": item.get("snippet", "No description")
+                    })
+        
         # Increment search usage count
         usage_limits.increment_search_usage()
         
@@ -76,25 +134,32 @@ async def search_web(query: str, num_results: int = 5) -> List[Dict[str, str]]:
                  "link": "", 
                  "snippet": f"An error occurred during web search: {str(e)}"}]
 
-def format_search_results(results: List[Dict[str, str]]) -> str:
+def format_search_results(results: List[Dict[str, str]], is_news: bool = False) -> str:
     """
     Format search results into a readable string.
     
     Args:
         results: List of search results
-    
+        is_news: Whether the results are for a news query
+        
     Returns:
         Formatted string of search results
     """
     if not results:
         return "جستجو نتیجه‌ای نداشت. 🔍"
     
-    formatted_text = "🔍 *نتایج جستجو*:\n\n"
+    if is_news:
+        formatted_text = "📰 *آخرین اخبار*:\n\n"
+    else:
+        formatted_text = "🔍 *نتایج جستجو*:\n\n"
     
     for i, result in enumerate(results, 1):
         formatted_text += f"{i}. *{result['title']}*\n"
         formatted_text += f"   {result['link']}\n"
         formatted_text += f"   {result['snippet']}\n\n"
+    
+    if is_news:
+        formatted_text += "🔍 *توجه*: نتایج از منابع خبری فارسی‌زبان استخراج شده است."
     
     return formatted_text
 

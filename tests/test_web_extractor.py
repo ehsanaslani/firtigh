@@ -14,7 +14,12 @@ class TestWebExtractor(unittest.TestCase):
     
     def run_async(self, coro):
         """Run a coroutine in the event loop."""
-        return asyncio.get_event_loop().run_until_complete(coro)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
     
     def test_extract_urls(self):
         """Test URL extraction from text."""
@@ -37,12 +42,14 @@ class TestWebExtractor(unittest.TestCase):
         urls = web_extractor.extract_urls(text)
         self.assertEqual(len(urls), 0)
     
-    @patch("web_extractor.requests.get")
-    def test_extract_content_from_url_success(self, mock_get):
+    @patch("aiohttp.ClientSession")
+    def test_extract_content_from_url_success(self, mock_session):
         """Test successful content extraction from URL."""
         # Mock the response
         mock_response = MagicMock()
-        mock_response.content = """
+        mock_response.status = 200
+        mock_response.text = MagicMock(return_value=asyncio.Future())
+        mock_response.text.return_value.set_result("""
         <html>
             <head>
                 <title>Test Page</title>
@@ -53,11 +60,12 @@ class TestWebExtractor(unittest.TestCase):
                 <p class="footer">Copyright 2023</p>
             </body>
         </html>
-        """
-        mock_get.return_value = mock_response
+        """)
         
-        # Set up response status
-        mock_response.raise_for_status = MagicMock()
+        # Mock the session
+        mock_session_instance = MagicMock()
+        mock_session.return_value.__aenter__.return_value = mock_session_instance
+        mock_session_instance.get.return_value.__aenter__.return_value = mock_response
         
         # Call the function
         title, content = self.run_async(web_extractor.extract_content_from_url("https://example.com"))
@@ -67,11 +75,13 @@ class TestWebExtractor(unittest.TestCase):
         self.assertIn("first paragraph", content)
         self.assertIn("interesting content", content)
     
-    @patch("web_extractor.requests.get")
-    def test_extract_content_from_url_error(self, mock_get):
+    @patch("aiohttp.ClientSession")
+    def test_extract_content_from_url_error(self, mock_session):
         """Test error handling in content extraction."""
-        # Make the request raise an exception
-        mock_get.side_effect = Exception("Connection error")
+        # Make the session raise an exception
+        mock_session_instance = MagicMock()
+        mock_session.return_value.__aenter__.return_value = mock_session_instance
+        mock_session_instance.get.side_effect = Exception("Connection error")
         
         # Call the function
         title, content = self.run_async(web_extractor.extract_content_from_url("https://example.com"))
@@ -95,7 +105,10 @@ class TestWebExtractor(unittest.TestCase):
     def test_process_message_links_with_valid_urls(self, mock_extract):
         """Test processing message with valid URLs."""
         # Set up the mock
-        mock_extract.side_effect = lambda url: ("Test Page", "This is the content of the test page.")
+        async def mock_extract_impl(url):
+            return "Test Page", "This is the content of the test page."
+        
+        mock_extract.side_effect = mock_extract_impl
         
         # Message with URL
         message = "Check out this link: https://example.com"
@@ -107,7 +120,7 @@ class TestWebExtractor(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertIn("Test Page", result)
         self.assertIn("content of the test page", result)
-        self.assertIn("محتوای لینک‌های ارسال شده", result)  # Should include Persian header
+        self.assertIn("محتوای لینک‌های ارسالی", result)  # Should include Persian header
     
     def test_process_message_links_no_urls(self):
         """Test processing message with no URLs."""
@@ -117,14 +130,17 @@ class TestWebExtractor(unittest.TestCase):
         # Call the function
         result = self.run_async(web_extractor.process_message_links(message))
         
-        # Check the result
-        self.assertIsNone(result)
+        # Check the result - should be an empty string, not None
+        self.assertEqual(result, "")
     
     @patch("web_extractor.extract_content_from_url")
     def test_process_message_links_extraction_error(self, mock_extract):
         """Test handling of extraction errors."""
         # Set up the mock to return an error
-        mock_extract.side_effect = lambda url: ("Error", "Could not extract content from URL.")
+        async def mock_extract_impl(url):
+            return "Error", "Could not extract content from URL."
+        
+        mock_extract.side_effect = mock_extract_impl
         
         # Message with URL
         message = "Check out this link: https://example.com"
