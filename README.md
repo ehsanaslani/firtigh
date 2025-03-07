@@ -1,6 +1,72 @@
-# Firtigh - AI-powered Telegram Bot
+# فیرتیق - Enhanced Telegram Bot
 
-Firtigh is a Telegram bot that uses AI to generate responses when mentioned in a group chat.
+فیرتیق (Firtigh) is an intelligent Telegram bot designed to interact with group members in a natural, conversational way.
+
+## Key Features
+
+### Intelligence and Personality
+
+- **Advanced AI Model**: Uses O3 mini model for all responses to provide high-quality interactions
+- **Persian First**: Always responds in Persian language
+- **Fun, Informal Personality**: Has a sarcastic, fun personality with no filtering of language
+- **Can Argue and Debate**: Capable of contradicting users if it thinks they're wrong
+
+### Activation
+
+- Responds when mentioned by name "فیرتیق" or "firtigh"
+- Responds when mentioned with "@firtigh"
+- Responds when someone replies to its messages
+
+### Memory and Context
+
+- **Enhanced Group Memory**: Remembers up to 1000 recent messages from the group
+- **Topic Tracking**: Organizes memories by topic for better context in responses
+- **User Profiling**: Creates profiles of users based on:
+  - Personality traits
+  - Topics of interest
+  - Writing style and tone
+  - Sentiment patterns
+  - Message frequency
+- **Name Correction**: Learns to use proper Persian names for users when corrected
+
+### Information Tools
+
+- **Web Search**: Can search the web for real-time information
+- **Link Analysis**: Extracts and summarizes content from shared links
+- **News Aggregation**: Can compile news from top Persian news sites
+- **Exchange Rates**: Provides up-to-date currency exchange rates to Iranian Rial/Toman
+- **Weather Information**: Can retrieve weather information
+- **Image Understanding**: Can analyze and understand images and animated GIFs
+
+### Conversation Management
+
+- **Thread Context**: Understands context in reply threads
+- **Instruction Following**: Can accept and remember instructions from users
+- **Markdown Formatting**: Uses proper formatting for better readability
+
+## Technical Details
+
+- The memory system stores both factual information and conversational context
+- User profiles are built incrementally through natural interaction
+- Enhanced name correction system that learns the proper Persian spelling of users' names
+- Response formatting is optimized for Telegram, including proper links and markdown
+- High-quality error handling to ensure stability
+- Persian-first interaction design
+
+## Usage Examples
+
+- **Simple Chat**: "@firtigh خوبی؟" (How are you?)
+- **Web Search**: "@firtigh جستجو کن قیمت طلا" (Search for gold prices)
+- **Group Memory**: "@firtigh خلاصه گفتگوهای سه روز اخیر" (Summarize conversations from the last three days)
+- **News**: "@firtigh اخبار امروز چیه؟" (What's the news today?)
+- **Exchange Rates**: "@firtigh قیمت دلار چنده؟" (What's the dollar exchange rate?)
+- **Image Analysis**: Reply to an image with "@firtigh این چیه؟" (What is this?)
+- **Instructions**: "@firtigh از این به بعد من رو علی صدا کن" (From now on call me Ali)
+- **Discussions**: Can join and participate in group discussions naturally
+
+## Authors
+
+فیرتیق الله باقرزاده (Firtigh Allah Bagherzadeh) - AI Telegram Bot
 
 ## Features
 

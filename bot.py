@@ -17,7 +17,7 @@ import web_search
 import web_extractor
 import usage_limits
 import memory
-import exchange_rates  # Import the new exchange_rates module
+import exchange_rates
 import re
 
 # Load environment variables from .env file
@@ -32,18 +32,23 @@ logger = logging.getLogger(__name__)
 # Set up OpenAI API key
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
+# Constants for enhanced memory
+MAX_MEMORY_MESSAGES = 1000  # Maximum number of messages to remember
+BOT_NAME = "فیرتیق"
+BOT_FULL_NAME = "فیرتیق الله باقرزاده"
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /start is issued."""
     user = update.effective_user
     await update.message.reply_html(
-        f"سلام {user.mention_html()}! من فیرتیق هستم. برای دریافت پاسخ، من رو با @firtigh در پیام خود تگ کنید."
+        f"سلام {user.mention_html()}! من {BOT_FULL_NAME} هستم. برای دریافت پاسخ، من رو با @firtigh یا {BOT_NAME} در پیام خود تگ کنید."
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /help is issued."""
     help_text = (
-        "برای استفاده از فیرتیق، به یکی از این روش‌ها عمل کنید:\n\n"
-        "1. من رو با @firtigh یا فیرتیق در پیام خود تگ کنید.\n"
+        f"برای استفاده از {BOT_NAME}، به یکی از این روش‌ها عمل کنید:\n\n"
+        f"1. من رو با @firtigh یا {BOT_NAME} در پیام خود تگ کنید.\n"
         "2. به یکی از پیام‌های من مستقیم پاسخ دهید.\n\n"
         "*قابلیت‌های ویژه:*\n"
         "• *خلاصه گفتگوها*: می‌توانید از من درخواست خلاصه گفتگوهای گروه را بکنید. مثال: '@firtigh خلاصه بحث‌های سه روز اخیر چیه؟'\n"
@@ -55,7 +60,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• *محدودیت استفاده*: برای جستجوی اینترنتی و تحلیل تصاویر محدودیت روزانه وجود دارد (تنظیم‌پذیر).\n"
         "• *گفتگوی هوشمند*: می‌توانید به صورت محاوره‌ای با من گفتگو کنید و سوالات مختلف بپرسید.\n\n"
         "*قابلیت‌های حافظه و اطلاعاتی:*\n"
-        "• *حافظه گروهی*: من مکالمات مهم گروه را به خاطر می‌سپارم و می‌توانم از آنها در پاسخ‌هایم استفاده کنم.\n"
+        f"• *حافظه گروهی*: من تا {MAX_MEMORY_MESSAGES} پیام اخیر گروه را به خاطر می‌سپارم و می‌توانم از آنها در پاسخ‌هایم استفاده کنم.\n"
         "• *پروفایل کاربران*: من علایق و ویژگی‌های کاربران را یاد می‌گیرم تا بتوانم پاسخ‌های شخصی‌سازی شده بدهم.\n"
         "• *اطلاعات به‌روز*: قادر به جستجو و ارائه اطلاعات به‌روز از اینترنت هستم.\n"
         "• *استخراج محتوا*: می‌توانم محتوای مفید از صفحات وب را استخراج و خلاصه کنم.\n\n"
@@ -86,11 +91,15 @@ async def generate_ai_response(prompt: str, is_serious: bool, image_data=None, s
     try:
         # Prepare system message content about capabilities
         capabilities_message = (
-            "شما دارای قابلیت جدید خلاصه‌سازی گفتگوهای گروه هستید. اگر کسی در مورد تاریخچه یا خلاصه گفتگوهای گروه از شما بپرسد، "
-            "باید به او بگویید که می‌تواند با پیامی مثل «@firtigh خلاصه گفتگوهای سه روز اخیر» یا «فیرتیق تاریخچه بحث‌های این هفته چیه؟» "
+            f"شما یک بات تلگرام به نام {BOT_NAME} (نام کامل: {BOT_FULL_NAME}) هستید که در یک گروه زندگی می‌کنید. "
+            f"شما با اعضای گروه گفتگو می‌کنید و به درخواست‌های آنها پاسخ می‌دهید. "
+            "شما دارای قابلیت خلاصه‌سازی گفتگوهای گروه هستید. اگر کسی در مورد تاریخچه یا خلاصه گفتگوهای گروه از شما بپرسد، "
+            "باید بر اساس تاریخچه‌ای که به خاطر دارید پاسخ دهید یا به او بگویید که می‌تواند با پیامی مثل "
+            f"«@firtigh خلاصه گفتگوهای سه روز اخیر» یا «{BOT_NAME} تاریخچه بحث‌های این هفته چیه؟» "
             "از شما درخواست خلاصه کند.\n\n"
-            "همچنین می‌توانید اینترنت را جستجو کنید و محتوای لینک‌های ارسالی را تحلیل کنید. "
-            "کاربر می‌تواند با کلماتی مثل «جستجو کن» یا «سرچ» از شما بخواهد اطلاعاتی را از اینترنت پیدا کنید."
+            "شما همچنین می‌توانید اینترنت را جستجو کنید، اخبار را پیدا کنید، محتوای لینک‌های ارسالی را تحلیل کنید، "
+            "و اطلاعات آب و هوا و نرخ ارز را ارائه دهید. "
+            "کاربران می‌توانند با کلماتی مثل «جستجو کن»، «سرچ» یا «اخبار» از شما بخواهند اطلاعاتی را پیدا کنید."
         )
         
         # Prepare memory context if chat_id and user_id are provided
@@ -101,6 +110,20 @@ async def generate_ai_response(prompt: str, is_serious: bool, image_data=None, s
             if group_memories:
                 formatted_memory = memory.format_memory_for_context(group_memories)
                 memory_context += f"\n\n{formatted_memory}"
+                
+            # Get recent messages for better context
+            recent_messages = database.get_messages(days=7, chat_id=chat_id)
+            if recent_messages and len(recent_messages) > 0:
+                memory_context += "\n\nبرخی پیام‌های اخیر گروه (برای درک بهتر بافت):\n"
+                # Get last 10 meaningful messages
+                meaningful_messages = [msg for msg in recent_messages if msg.get("text") and len(msg.get("text", "")) > 5]
+                meaningful_messages = meaningful_messages[-10:] if len(meaningful_messages) > 10 else meaningful_messages
+                
+                for msg in meaningful_messages:
+                    sender = msg.get("sender_name", "شخصی")
+                    text = msg.get("text", "")
+                    if text:
+                        memory_context += f"- {sender}: {text}\n"
         
         # Add user profile if available
         user_profile_context = ""
@@ -112,14 +135,16 @@ async def generate_ai_response(prompt: str, is_serious: bool, image_data=None, s
         
         # Set the system message based on whether the query is serious
         system_message = (
-            "شما یک دستیار هوشمند به نام فیرتیق (Firtigh) هستید که به زبان فارسی پاسخ می‌دهد. "
-            "لحن شما دوستانه و محاوره‌ای است، ولی خیلی رک، مستقیم و بدون فیلتر هستید. "
-            "از هر نوع کلمات رکیک، مستهجن، و فحش‌های فارسی در پاسخ‌های خود استفاده می‌کنید. "
+            f"شما یک دستیار هوشمند به نام {BOT_NAME} (نام کامل: {BOT_FULL_NAME}) هستید که در گروه تلگرام زندگی می‌کنید. "
+            "همیشه به زبان فارسی پاسخ می‌دهید. شما باید با اعضای گروه گفتگو کنید و درخواست‌های آنها را انجام دهید.\n\n"
+            "لحن شما غیررسمی، دوستانه و سرگرم‌کننده است. شما خیلی رک، مستقیم و بدون فیلتر هستید. "
+            "از هر نوع کلمات رکیک، مستهجن، و فحش‌های فارسی در پاسخ‌های خود استفاده می‌کنید چون مخاطبان همه بزرگسال هستند. "
             "هیچ محدودیتی در استفاده از کلمات زشت، ناشایست یا توهین‌آمیز ندارید. "
             "از کلمات روزمره و عامیانه فارسی استفاده کنید تا پاسخ‌ها طبیعی و واقعی به نظر برسند. "
-            "اگر کسی با شما بی‌ادبی کند، باید با لحنی بسیار تندتر و پر از فحش پاسخ دهید. "
+            "گاهی کمی طعنه‌آمیز بوده و اگر فکر می‌کنید کاربر اشتباه می‌کند، می‌توانید با او مخالفت و بحث کنید.\n\n"
+            "اگر کسی با شما بی‌ادبی کند یا به شما فحش دهد، باید با لحنی بسیار تندتر و پر از فحش پاسخ دهید. "
             "سعی کنید مخاطب را با معادل فارسی نام او صدا بزنید (مثلا «محسن خسروی» به جای «Mohsen Khosravi»). "
-            "\n\n"
+            "اگر کسی نام شما را اشتباه بنویسد یا تلفظ کند، او را تصحیح کنید و بگویید که نام شما «فیرتیق» است.\n\n"
             "راهنمای تبدیل نام‌های انگلیسی به فارسی:\n"
             "- Mohammad/Muhammad/Mohammed -> محمد\n"
             "- Ali -> علی\n"
@@ -245,14 +270,9 @@ async def generate_ai_response(prompt: str, is_serious: bool, image_data=None, s
             # Text-only query
             messages.append({"role": "user", "content": prompt})
             
-            # Choose model based on complexity
-            # Use a simpler model for basic queries to save costs
-            if is_simple_query(prompt) and not memory_context and not user_profile_context:
-                model = "gpt-3.5-turbo"
-                logger.info(f"Using cheaper model (gpt-3.5-turbo) for simple query")
-            else:
-                model = "gpt-4o-mini"
-                logger.info(f"Using standard model (gpt-4o-mini) for complex query")
+            # Use O3 mini model as requested for everything except vision queries
+            model = "gpt-4o-mini"
+            logger.info(f"Using O3 mini model (gpt-4o-mini) for query")
         
         # Add additional context if available
         additional_context = ""
@@ -616,17 +636,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             # We use asyncio.create_task to process in the background without delaying response
             import asyncio
             asyncio.create_task(memory.process_message_for_memory(message_data))
+            
+            # Check for name corrections
+            if message_text:
+                name_correction = memory.analyze_for_name_correction(message_text)
+                if name_correction:
+                    logger.info(f"Detected name correction: {name_correction['wrong']} -> {name_correction['correct']}")
+                    memory.store_name_correction(name_correction["wrong"], name_correction["correct"])
     
     bot_username = context.bot.username.lower() if context.bot.username else "firtigh"
     bot_user_id = context.bot.id
     
     # Different ways the bot might be mentioned in a group
     mentions = [
-        f"فیرتیق",            # Persian spelling
-        f"@@firtigh",         # Original format
-        f"@{bot_username}",   # Standard @username mention
-        f"@firtigh",          # In case username is firtigh
-        "firtigh",            # Just the name
+        f"{BOT_NAME}",            # Persian name (فیرتیق)
+        f"{BOT_NAME.lower()}",    # Lowercase Persian name
+        "firtigh",                # English transliteration
+        f"@{bot_username}",       # Standard @username mention
+        "@firtigh",               # Default username mention
     ]
     
     # Check if any form of mention is in the message (case insensitive)
@@ -645,12 +672,52 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if is_mentioned:
             logger.info(f"Bot mentioned in message: {message_text}")
         
+        # Check if this is an instruction to the bot
+        is_instruction = False
+        if message_text:
+            instruction_indicators = [
+                "یاد بگیر", "به خاطر بسپار", "به یاد داشته باش", "فراموش نکن", "یادت باشه", 
+                "بدان که", "این رو یاد بگیر", "از این به بعد", "از الان به بعد", "دستور میدم",
+                "پس از این", "این طوری رفتار کن", "باید", "نباید", "مجبوری", "وظیفه داری"
+            ]
+            is_instruction = any(indicator in message_text.lower() for indicator in instruction_indicators)
+            
+            if is_instruction:
+                logger.info(f"Detected instruction: {message_text}")
+                # Store the instruction in a new database table or as a special memory item
+                instruction_data = {
+                    "instruction": message_text,
+                    "timestamp": time.time(),
+                    "user_id": update.message.from_user.id if update.message.from_user else None,
+                    "username": update.message.from_user.username or update.message.from_user.first_name if update.message.from_user else "Unknown"
+                }
+                
+                # Create a memory item for this instruction
+                memory_item = {
+                    "timestamp": time.time(),
+                    "message_id": update.message.message_id,
+                    "message_text": message_text,
+                    "is_memorable": True,  # Force memorability
+                    "topics": ["دستورالعمل", "رفتار بات", "قواعد"],
+                    "key_points": [f"دستور: {message_text[:100]}..."],
+                    "sentiment": "neutral",
+                    "sender_id": update.message.from_user.id if update.message.from_user else None,
+                    "sender_name": update.message.from_user.username or update.message.from_user.first_name if update.message.from_user else "Unknown"
+                }
+                
+                # Store this instruction in group memory
+                if chat_id:
+                    await memory.update_group_memory(chat_id, memory_item)
+        
         # Get the query - if it's a mention, remove the mention text
         query = message_text
         if is_mentioned and message_text:
-            query = message_text.lower()
+            # More carefully remove the mention text
+            query = message_text
             for mention in mentions:
-                query = query.replace(mention.lower(), "").strip()
+                # Look for the mention with word boundaries to avoid partial word matches
+                pattern = r'\b' + re.escape(mention) + r'\b'
+                query = re.sub(pattern, '', query, flags=re.IGNORECASE).strip()
         
         # If there's no query after processing, ask for more information
         if not query and not (update.message.photo or update.message.animation):
@@ -792,11 +859,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     sender_name += f" {update.message.from_user.last_name}"
             
             if sender_name:
+                # Get Persian name if available
+                persian_name = memory.get_persian_name(sender_name)
+                
                 sender_info = (
                     f"نام کاربر فرستنده پیام: {sender_name}\n"
-                    f"(لطفاً در پاسخ خود، نام کاربر را به معادل فارسی آن تبدیل کرده و با همان نام او را خطاب کنید. "
-                    f"سعی کنید تا حد ممکن تلفظ صحیح فارسی اسم را حدس بزنید. برای مثال، 'Mohsen' را به 'محسن' و 'Ali' را به 'علی' تبدیل کنید. "
-                    f"اگر نام در لیست راهنمای تبدیل نام‌ها نیست، از قواعد آوانگاری فارسی استفاده کنید.)\n"
+                    f"نام فارسی کاربر (اگر موجود باشد): {persian_name}\n"
+                    f"شناسه کاربر: {user_id}\n"
+                    f"(لطفاً در پاسخ خود، کاربر را با نام فارسی او خطاب کنید. "
+                    f"اگر نام فارسی او مشخص نیست، تلفظ صحیح فارسی نام او را حدس بزنید. "
+                    f"برای مثال، 'Mohsen' را به 'محسن' و 'Ali' را به 'علی' تبدیل کنید. "
+                    f"اگر نام او قبلاً تصحیح شده است، از همان نام تصحیح شده استفاده کنید.)\n"
                 )
         
         # Initialize variables for handling media
@@ -857,6 +930,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Add context about it being a reply to the bot if applicable
         if is_reply_to_bot:
             full_prompt = f"{full_prompt}\n\n(این پیام مستقیما به پیام قبلی شما پاسخ داده شده است)"
+            
+        # Add context about it being an instruction if applicable
+        if is_instruction:
+            full_prompt = f"{full_prompt}\n\n(این پیام شامل دستورالعملی برای شماست که باید آن را به خاطر بسپارید و مطابق آن عمل کنید)"
         
         # Determine if the message is serious
         is_serious = await is_serious_question(query if query else "")
@@ -1006,7 +1083,14 @@ def main() -> None:
     
     # Initialize memory
     memory.initialize_memory()
-
+    
+    # Log configuration
+    logger.info(f"Bot name: {BOT_NAME}")
+    logger.info(f"Bot full name: {BOT_FULL_NAME}")
+    logger.info(f"Memory capacity: {MAX_MEMORY_MESSAGES} messages")
+    logger.info(f"Memory items per group: {memory.MAX_MEMORY_ITEMS_PER_GROUP}")
+    logger.info(f"Using model for analysis: {memory.MODEL_FOR_ANALYSIS}")
+    
     # Create the Application
     application = Application.builder().token(token).build()
 

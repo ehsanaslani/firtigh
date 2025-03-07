@@ -38,6 +38,7 @@ def temp_data_dir():
     memory.DATA_DIR = temp_dir
     memory.MEMORY_FILE = os.path.join(temp_dir, "group_memory.json")
     memory.USER_PROFILES_FILE = os.path.join(temp_dir, "user_profiles.json")
+    memory.NAME_CORRECTIONS_FILE = os.path.join(temp_dir, "name_corrections.json")
     
     # Yield the temp directory
     yield temp_dir
@@ -47,6 +48,7 @@ def temp_data_dir():
     memory.DATA_DIR = original_data_dir
     memory.MEMORY_FILE = os.path.join(original_data_dir, "group_memory.json")
     memory.USER_PROFILES_FILE = os.path.join(original_data_dir, "user_profiles.json")
+    memory.NAME_CORRECTIONS_FILE = os.path.join(original_data_dir, "name_corrections.json")
 
 def test_initialize_memory(temp_data_dir):
     """Test the initialize_memory function."""
@@ -56,6 +58,7 @@ def test_initialize_memory(temp_data_dir):
     # Check that the files were created
     assert os.path.exists(memory.MEMORY_FILE)
     assert os.path.exists(memory.USER_PROFILES_FILE)
+    assert os.path.exists(memory.NAME_CORRECTIONS_FILE)
     
     # Check that the files have the correct structure
     with open(memory.MEMORY_FILE, "r", encoding="utf-8") as f:
@@ -67,6 +70,11 @@ def test_initialize_memory(temp_data_dir):
         profile_data = json.load(f)
         assert "users" in profile_data
         assert isinstance(profile_data["users"], dict)
+        
+    with open(memory.NAME_CORRECTIONS_FILE, "r", encoding="utf-8") as f:
+        corrections_data = json.load(f)
+        assert "corrections" in corrections_data
+        assert isinstance(corrections_data["corrections"], dict)
 
 @patch('openai.ChatCompletion.create')
 def test_analyze_message_for_memory(mock_create, temp_data_dir):
@@ -78,13 +86,18 @@ def test_analyze_message_for_memory(mock_create, temp_data_dir):
         "sentiment": "positive",
         "key_points": ["AI is improving", "Memory is useful"],
         "user_traits": ["tech-savvy", "curious"],
-        "is_memorable": True
+        "is_memorable": True,
+        "interests": ["technology", "artificial intelligence"],
+        "tone": "enthusiastic",
+        "language_quality": "articulate"
     })
     mock_create.return_value = mock_response
     
     # Test message data
     message_data = {
         "message_id": 123,
+        "sender_id": 456,
+        "sender_name": "test_user",
         "text": "I think AI memory systems are getting really good these days."
     }
     
@@ -97,7 +110,12 @@ def test_analyze_message_for_memory(mock_create, temp_data_dir):
     assert "key_points" in result
     assert "user_traits" in result
     assert "is_memorable" in result
+    assert "interests" in result
+    assert "tone" in result
+    assert "language_quality" in result
     assert result["message_id"] == 123
+    assert result["sender_id"] == 456
+    assert result["sender_name"] == "test_user"
     assert "message_text" in result
     assert "timestamp" in result
 
@@ -111,9 +129,14 @@ def test_process_message_for_memory(mock_analyze, temp_data_dir):
         "key_points": ["AI is improving", "Memory is useful"],
         "user_traits": ["tech-savvy", "curious"],
         "is_memorable": True,
+        "interests": ["technology", "artificial intelligence"],
+        "tone": "enthusiastic",
+        "language_quality": "articulate",
         "timestamp": time.time(),
         "message_id": 123,
-        "message_text": "Test message"
+        "message_text": "Test message",
+        "sender_id": 456,
+        "sender_name": "test_user"
     }
     
     # Initialize memory
@@ -122,7 +145,7 @@ def test_process_message_for_memory(mock_analyze, temp_data_dir):
     # Test message data
     message_data = {
         "chat_id": 123456,
-        "sender_id": 789012,
+        "sender_id": 456,
         "sender_name": "test_user",
         "message_id": 123,
         "text": "Test message"
@@ -148,7 +171,9 @@ def test_update_and_get_group_memory(temp_data_dir):
         "is_memorable": True,
         "timestamp": time.time(),
         "message_id": 123,
-        "message_text": "Test message"
+        "message_text": "Test message",
+        "sender_id": 456,
+        "sender_name": "test_user"
     }
     
     # Call update_group_memory
@@ -159,19 +184,24 @@ def test_update_and_get_group_memory(temp_data_dir):
     assert len(memories) == 1
     assert memories[0]["topics"] == ["test"]
     assert memories[0]["message_id"] == 123
+    assert memories[0]["sender_id"] == 456
+    assert memories[0]["sender_name"] == "test_user"
 
 def test_update_and_get_user_profile(temp_data_dir):
     """Test the update_user_profile and get_user_profile functions."""
     # Initialize memory
     memory.initialize_memory()
     
-    # Call update_user_profile
+    # Call update_user_profile with additional parameters
     run_async(memory.update_user_profile(
         user_id=789012,
         username="test_user",
         traits=["friendly", "helpful"],
         topics=["tech", "AI"],
-        sentiment="positive"
+        sentiment="positive",
+        interests=["technology", "programming"],
+        tone="enthusiastic",
+        language_quality="articulate"
     ))
     
     # Get the profile and verify
@@ -180,44 +210,107 @@ def test_update_and_get_user_profile(temp_data_dir):
     assert "friendly" in profile["traits"]
     assert "tech" in profile["topics_of_interest"]
     assert profile["sentiment_counts"]["positive"] == 1
+    assert "technology" in profile["interests"]
+    assert "enthusiastic" in profile["tone_counts"]
+    assert "articulate" in profile["language_quality_counts"]
+    assert "message_count" in profile
+    assert profile["message_count"] == 1
+
+def test_name_correction_functions(temp_data_dir):
+    """Test the name correction functions."""
+    # Initialize memory
+    memory.initialize_memory()
+    
+    # Store a name correction
+    memory.store_name_correction("john_doe", "جان دو")
+    
+    # Get the corrected name
+    corrected_name = memory.get_persian_name("john_doe")
+    assert corrected_name == "جان دو"
+    
+    # Test case insensitivity
+    corrected_name = memory.get_persian_name("John_Doe")
+    assert corrected_name == "جان دو"
+    
+    # Test unknown name
+    unknown_name = memory.get_persian_name("unknown_user")
+    assert unknown_name == "unknown_user"
+
+def test_analyze_for_name_correction(temp_data_dir):
+    """Test the analyze_for_name_correction function."""
+    # Test various correction patterns
+    correction1 = memory.analyze_for_name_correction("اسم من علی است، نه ali")
+    assert correction1["correct"] == "علی"
+    assert correction1["wrong"] == "ali"
+    
+    correction2 = memory.analyze_for_name_correction("من رو محمد صدا کن، نه Mohammad")
+    assert correction2["correct"] == "محمد"
+    assert correction2["wrong"] == "Mohammad"
+    
+    correction3 = memory.analyze_for_name_correction("حسین درسته، نه Hossein")
+    assert correction3["correct"] == "حسین"
+    assert correction3["wrong"] == "Hossein"
+    
+    # Test no correction
+    no_correction = memory.analyze_for_name_correction("این یک متن معمولی است بدون تصحیح نام")
+    assert no_correction is None
 
 def test_format_memory_for_context(temp_data_dir):
     """Test the format_memory_for_context function."""
+    # Initialize memory with name corrections
+    memory.initialize_memory()
+    memory.store_name_correction("test_user", "کاربر آزمایشی")
+    
     # Test memory items
     memory_items = [
         {
             "topics": ["tech"],
             "key_points": ["AI memory is useful"],
             "timestamp": time.time(),
-            "message_id": 123
+            "message_id": 123,
+            "sender_name": "test_user"
         },
         {
             "topics": ["weather"],
             "key_points": ["It's sunny today"],
             "timestamp": time.time() - 86400,  # 1 day ago
-            "message_id": 124
+            "message_id": 124,
+            "sender_name": "other_user"
         }
     ]
     
     # Format and verify
     formatted = memory.format_memory_for_context(memory_items)
-    assert "اطلاعات پیشین در مورد این گروه" in formatted
+    assert "حافظه گروه" in formatted
+    assert "موضوع: tech" in formatted
     assert "AI memory is useful" in formatted
-    assert "It's sunny today" in formatted
+    assert "کاربر آزمایشی" in formatted  # Persian name should be used
 
 def test_format_user_profile_for_context(temp_data_dir):
     """Test the format_user_profile_for_context function."""
+    # Initialize memory with name corrections
+    memory.initialize_memory()
+    memory.store_name_correction("test_user", "کاربر آزمایشی")
+    
     # Test user profile
     profile = {
         "username": "test_user",
         "traits": {"friendly": 3, "helpful": 2},
         "topics_of_interest": {"tech": 5, "AI": 3},
-        "sentiment_counts": {"positive": 7, "negative": 1, "neutral": 2}
+        "sentiment_counts": {"positive": 7, "negative": 1, "neutral": 2},
+        "interests": {"technology": 4, "programming": 3},
+        "tone_counts": {"enthusiastic": 5, "formal": 2},
+        "language_quality_counts": {"articulate": 6, "technical": 3},
+        "message_count": 10
     }
     
     # Format and verify
     formatted = memory.format_user_profile_for_context(profile)
-    assert "اطلاعات کاربر test_user" in formatted
-    assert "ویژگی‌ها: friendly، helpful" in formatted
-    assert "علایق: tech، AI" in formatted
-    assert "لحن معمول: مثبت" in formatted 
+    assert "پروفایل کاربر کاربر آزمایشی" in formatted  # Persian name should be used
+    assert "ویژگی‌های شخصیتی: friendly" in formatted
+    assert "موضوعات مورد بحث: tech" in formatted
+    assert "علایق: technology" in formatted
+    assert "لحن معمول: enthusiastic" in formatted
+    assert "سبک نگارش: articulate" in formatted
+    assert "نگرش کلی: مثبت" in formatted
+    assert "تعداد پیام‌ها: 10" in formatted 

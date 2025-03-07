@@ -10,6 +10,9 @@ logger = logging.getLogger(__name__)
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 MESSAGES_FILE = os.path.join(DATA_DIR, "message_history.json")
 
+# Maximum number of messages to store
+MAX_MESSAGES = 1000  # Store 1000 messages as requested
+
 # Ensure data directory exists
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -40,10 +43,10 @@ def save_message(message_data: Dict[str, Any]) -> bool:
         # Add new message
         data["messages"].append(message_data)
         
-        # Limit to the most recent 1000 messages
-        if len(data["messages"]) > 1000:
-            data["messages"] = data["messages"][-1000:]
-            logger.info("Trimmed message history to 1000 most recent messages")
+        # Limit to the most recent MAX_MESSAGES messages
+        if len(data["messages"]) > MAX_MESSAGES:
+            data["messages"] = data["messages"][-MAX_MESSAGES:]
+            logger.info(f"Trimmed message history to {MAX_MESSAGES} most recent messages")
         
         # Write updated data
         with open(MESSAGES_FILE, "w", encoding="utf-8") as f:

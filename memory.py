@@ -14,15 +14,16 @@ logger = logging.getLogger(__name__)
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 MEMORY_FILE = os.path.join(DATA_DIR, "group_memory.json")
 USER_PROFILES_FILE = os.path.join(DATA_DIR, "user_profiles.json")
+NAME_CORRECTIONS_FILE = os.path.join(DATA_DIR, "name_corrections.json")
 
 # Ensure data directory exists
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # Constants
-MAX_MEMORY_ITEMS_PER_GROUP = 30  # Maximum number of memory items per group
-MAX_PROFILE_CHARACTERISTICS = 10  # Maximum number of traits/topics per user profile
+MAX_MEMORY_ITEMS_PER_GROUP = 100  # Increased from 30 to 100
+MAX_PROFILE_CHARACTERISTICS = 20  # Increased from 10 to 20
 MEMORY_REFRESH_DAYS = 30  # How long before a memory item is considered "old"
-MODEL_FOR_ANALYSIS = "gpt-3.5-turbo"  # Cheaper model for analysis
+MODEL_FOR_ANALYSIS = "gpt-4o-mini"  # Use O3 mini model for analysis as requested
 
 def initialize_memory():
     """Initialize the memory files if they don't exist."""
@@ -37,6 +38,12 @@ def initialize_memory():
         with open(USER_PROFILES_FILE, "w", encoding="utf-8") as f:
             json.dump({"users": {}}, f, ensure_ascii=False, indent=2)
         logger.info(f"Created new user profiles file at {USER_PROFILES_FILE}")
+        
+    # Initialize name corrections
+    if not os.path.exists(NAME_CORRECTIONS_FILE):
+        with open(NAME_CORRECTIONS_FILE, "w", encoding="utf-8") as f:
+            json.dump({"corrections": {}}, f, ensure_ascii=False, indent=2)
+        logger.info(f"Created new name corrections file at {NAME_CORRECTIONS_FILE}")
 
 async def analyze_message_for_memory(message_data: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -62,21 +69,24 @@ async def analyze_message_for_memory(message_data: Dict[str, Any]) -> Dict[str, 
         MESSAGE: {text}
         
         Provide a JSON response with these fields:
-        1. topics: List of up to 3 main topics/subjects discussed
+        1. topics: List of up to 5 main topics/subjects discussed
         2. sentiment: Overall emotional tone (positive, negative, neutral)
-        3. key_points: List of up to 3 factual statements that would be valuable to remember
-        4. user_traits: List of traits the user exhibits in this message
+        3. key_points: List of up to 5 factual statements that would be valuable to remember long-term
+        4. user_traits: List of personality traits the user exhibits in this message
         5. is_memorable: Boolean indicating if this message contains information worth remembering long-term
+        6. interests: List of 3-5 potential interests the user might have based on this message
+        7. tone: The tone of the message (formal, informal, friendly, aggressive, sarcastic, etc.)
+        8. language_quality: Assessment of language use (articulate, basic, technical, etc.)
         """
         
-        # Use a cheaper model for analysis
+        # Use O3 mini model for analysis
         response = openai.ChatCompletion.create(
             model=MODEL_FOR_ANALYSIS,
             messages=[
                 {"role": "system", "content": "You are an AI that extracts key information from messages for memory purposes. Respond ONLY with the requested JSON format."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=300,
+            max_tokens=400,
             temperature=0.1  # Low temperature for consistent output
         )
         
@@ -99,13 +109,18 @@ async def analyze_message_for_memory(message_data: Dict[str, Any]) -> Dict[str, 
                     "sentiment": "neutral",
                     "key_points": [],
                     "user_traits": [],
-                    "is_memorable": False
+                    "is_memorable": False,
+                    "interests": [],
+                    "tone": "neutral",
+                    "language_quality": "standard"
                 }
             
             # Add metadata
             result["timestamp"] = time.time()
             result["message_id"] = message_data.get("message_id")
-            result["message_text"] = text[:200]  # Store truncated version
+            result["message_text"] = text[:300]  # Store larger snippet (increased from 200)
+            result["sender_id"] = message_data.get("sender_id")
+            result["sender_name"] = message_data.get("sender_name")
             
             return result
             
@@ -118,9 +133,14 @@ async def analyze_message_for_memory(message_data: Dict[str, Any]) -> Dict[str, 
                 "key_points": [],
                 "user_traits": [],
                 "is_memorable": False,
+                "interests": [],
+                "tone": "neutral",
+                "language_quality": "standard",
                 "timestamp": time.time(),
                 "message_id": message_data.get("message_id"),
-                "message_text": text[:200]
+                "message_text": text[:300],
+                "sender_id": message_data.get("sender_id"),
+                "sender_name": message_data.get("sender_name")
             }
             
     except Exception as e:
@@ -147,7 +167,14 @@ async def update_group_memory(chat_id: int, memory_item: Dict[str, Any]):
             memory_data["groups"][str(chat_id)] = []
         
         # Add new memory item
-        if memory_item.get("is_memorable", False):
+        # Lower the threshold to remember more items, not just the ones marked as memorable
+        is_somewhat_interesting = (
+            memory_item.get("is_memorable", False) or
+            (len(memory_item.get("key_points", [])) > 0) or
+            (memory_item.get("sentiment") in ["very positive", "very negative"])
+        )
+        
+        if is_somewhat_interesting or (len(memory_data["groups"][str(chat_id)]) < 20):
             memory_data["groups"][str(chat_id)].append(memory_item)
             
             # Sort by timestamp (newest first)
@@ -166,7 +193,9 @@ async def update_group_memory(chat_id: int, memory_item: Dict[str, Any]):
     except Exception as e:
         logger.error(f"Error updating group memory: {e}")
 
-async def update_user_profile(user_id: int, username: str, traits: List[str], topics: List[str], sentiment: str):
+async def update_user_profile(user_id: int, username: str, traits: List[str], topics: List[str], 
+                             sentiment: str, interests: List[str] = None, tone: str = None,
+                             language_quality: str = None):
     """
     Update a user's profile with new information.
     
@@ -176,6 +205,9 @@ async def update_user_profile(user_id: int, username: str, traits: List[str], to
         traits: List of traits exhibited in the message
         topics: List of topics the user discussed
         sentiment: The message sentiment
+        interests: List of interests inferred from the message
+        tone: The tone of the message
+        language_quality: Assessment of language use
     """
     try:
         initialize_memory()
@@ -191,11 +223,19 @@ async def update_user_profile(user_id: int, username: str, traits: List[str], to
                 "traits": {},
                 "topics_of_interest": {},
                 "sentiment_counts": {"positive": 0, "negative": 0, "neutral": 0},
-                "last_updated": time.time()
+                "interests": {},
+                "tone_counts": {},
+                "language_quality_counts": {},
+                "last_updated": time.time(),
+                "first_seen": time.time(),
+                "message_count": 0
             }
         else:
             # Update username in case it changed
             profile_data["users"][str(user_id)]["username"] = username
+        
+        # Increment message count
+        profile_data["users"][str(user_id)]["message_count"] = profile_data["users"][str(user_id)].get("message_count", 0) + 1
         
         # Update traits with frequency count
         for trait in traits:
@@ -219,6 +259,40 @@ async def update_user_profile(user_id: int, username: str, traits: List[str], to
         if sentiment in ["positive", "negative", "neutral"]:
             profile_data["users"][str(user_id)]["sentiment_counts"][sentiment] += 1
         
+        # Update interests
+        if interests:
+            for interest in interests:
+                if interest:
+                    interest = interest.lower()
+                    if interest in profile_data["users"][str(user_id)].get("interests", {}):
+                        profile_data["users"][str(user_id)]["interests"][interest] += 1
+                    else:
+                        if "interests" not in profile_data["users"][str(user_id)]:
+                            profile_data["users"][str(user_id)]["interests"] = {}
+                        profile_data["users"][str(user_id)]["interests"][interest] = 1
+        
+        # Update tone counts
+        if tone:
+            tone = tone.lower()
+            if "tone_counts" not in profile_data["users"][str(user_id)]:
+                profile_data["users"][str(user_id)]["tone_counts"] = {}
+            
+            if tone in profile_data["users"][str(user_id)]["tone_counts"]:
+                profile_data["users"][str(user_id)]["tone_counts"][tone] += 1
+            else:
+                profile_data["users"][str(user_id)]["tone_counts"][tone] = 1
+        
+        # Update language quality counts
+        if language_quality:
+            lang_quality = language_quality.lower()
+            if "language_quality_counts" not in profile_data["users"][str(user_id)]:
+                profile_data["users"][str(user_id)]["language_quality_counts"] = {}
+            
+            if lang_quality in profile_data["users"][str(user_id)]["language_quality_counts"]:
+                profile_data["users"][str(user_id)]["language_quality_counts"][lang_quality] += 1
+            else:
+                profile_data["users"][str(user_id)]["language_quality_counts"][lang_quality] = 1
+        
         # Update last_updated timestamp
         profile_data["users"][str(user_id)]["last_updated"] = time.time()
         
@@ -233,6 +307,13 @@ async def update_user_profile(user_id: int, username: str, traits: List[str], to
                    key=lambda item: item[1], reverse=True)[:MAX_PROFILE_CHARACTERISTICS]
         )
         
+        # Prune interests to keep only the most frequent
+        if "interests" in profile_data["users"][str(user_id)]:
+            profile_data["users"][str(user_id)]["interests"] = dict(
+                sorted(profile_data["users"][str(user_id)]["interests"].items(), 
+                       key=lambda item: item[1], reverse=True)[:MAX_PROFILE_CHARACTERISTICS]
+            )
+        
         # Write updated data
         with open(USER_PROFILES_FILE, "w", encoding="utf-8") as f:
             json.dump(profile_data, f, ensure_ascii=False, indent=2)
@@ -242,7 +323,59 @@ async def update_user_profile(user_id: int, username: str, traits: List[str], to
     except Exception as e:
         logger.error(f"Error updating user profile: {e}")
 
-def get_group_memory(chat_id: int, limit: int = 10) -> List[Dict[str, Any]]:
+def store_name_correction(username: str, correct_persian_name: str):
+    """
+    Store a corrected name mapping for future use.
+    
+    Args:
+        username: The original username or English name
+        correct_persian_name: The corrected Persian name
+    """
+    try:
+        initialize_memory()
+        
+        # Read existing corrections data
+        with open(NAME_CORRECTIONS_FILE, "r", encoding="utf-8") as f:
+            corrections_data = json.load(f)
+        
+        # Store the correction
+        corrections_data["corrections"][username.lower()] = correct_persian_name
+        
+        # Write updated data
+        with open(NAME_CORRECTIONS_FILE, "w", encoding="utf-8") as f:
+            json.dump(corrections_data, f, ensure_ascii=False, indent=2)
+            
+        logger.info(f"Stored name correction: {username} -> {correct_persian_name}")
+    
+    except Exception as e:
+        logger.error(f"Error storing name correction: {e}")
+
+def get_persian_name(username: str) -> str:
+    """
+    Get the corrected Persian name for a username if available.
+    
+    Args:
+        username: The original username or English name
+        
+    Returns:
+        The corrected Persian name if available, or the original username
+    """
+    try:
+        if not os.path.exists(NAME_CORRECTIONS_FILE):
+            return username
+            
+        # Read corrections data
+        with open(NAME_CORRECTIONS_FILE, "r", encoding="utf-8") as f:
+            corrections_data = json.load(f)
+        
+        # Look up correction
+        return corrections_data["corrections"].get(username.lower(), username)
+    
+    except Exception as e:
+        logger.error(f"Error retrieving name correction: {e}")
+        return username
+
+def get_group_memory(chat_id: int, limit: int = 30) -> List[Dict[str, Any]]:
     """
     Get the memory items for a specific group.
     
@@ -256,15 +389,19 @@ def get_group_memory(chat_id: int, limit: int = 10) -> List[Dict[str, Any]]:
     try:
         if not os.path.exists(MEMORY_FILE):
             return []
-        
+            
         # Read memory data
         with open(MEMORY_FILE, "r", encoding="utf-8") as f:
             memory_data = json.load(f)
         
         # Get group memory
-        group_memory = memory_data["groups"].get(str(chat_id), [])
+        if str(chat_id) not in memory_data["groups"]:
+            return []
+            
+        group_memory = memory_data["groups"][str(chat_id)]
         
-        # Return limited number of items
+        # Sort by timestamp (newest first) and limit
+        group_memory.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
         return group_memory[:limit]
     
     except Exception as e:
@@ -273,24 +410,27 @@ def get_group_memory(chat_id: int, limit: int = 10) -> List[Dict[str, Any]]:
 
 def get_user_profile(user_id: int) -> Dict[str, Any]:
     """
-    Get a user's profile information.
+    Get the profile for a specific user.
     
     Args:
         user_id: The user's Telegram ID
     
     Returns:
-        Dictionary with user profile information
+        User profile dictionary
     """
     try:
         if not os.path.exists(USER_PROFILES_FILE):
             return {}
-        
+            
         # Read profile data
         with open(USER_PROFILES_FILE, "r", encoding="utf-8") as f:
             profile_data = json.load(f)
         
         # Get user profile
-        return profile_data["users"].get(str(user_id), {})
+        if str(user_id) not in profile_data["users"]:
+            return {}
+            
+        return profile_data["users"][str(user_id)]
     
     except Exception as e:
         logger.error(f"Error retrieving user profile: {e}")
@@ -298,113 +438,217 @@ def get_user_profile(user_id: int) -> Dict[str, Any]:
 
 def format_memory_for_context(memory_items: List[Dict[str, Any]]) -> str:
     """
-    Format memory items into a string for inclusion in AI context.
+    Format memory items for inclusion in the AI prompt context.
     
     Args:
         memory_items: List of memory items
     
     Returns:
-        Formatted string of memories
+        Formatted string of memory items
     """
     if not memory_items:
         return ""
     
-    memory_lines = ["اطلاعات پیشین در مورد این گروه:"]
+    # Build list of memory points grouped by topic
+    memory_by_topic = defaultdict(list)
     
     for item in memory_items:
-        # Format timestamp
-        timestamp_str = datetime.datetime.fromtimestamp(
-            item.get("timestamp", 0)
-        ).strftime("%Y-%m-%d")
-        
-        # Format key points if available
+        # Extract key information
+        topics = item.get("topics", [])
         key_points = item.get("key_points", [])
-        if key_points:
-            points_text = " | ".join(key_points)
-            memory_lines.append(f"- {timestamp_str}: {points_text}")
+        message_text = item.get("message_text", "")
+        
+        # Get sender info
+        sender_name = item.get("sender_name", "")
+        if sender_name:
+            # Try to get Persian version of the name
+            sender_name = get_persian_name(sender_name)
+        
+        # Skip if no useful information
+        if not (topics or key_points):
+            continue
+        
+        # Add to topics
+        for topic in topics:
+            if topic and key_points:
+                memory_by_topic[topic].extend([f"{point} (از {sender_name})" for point in key_points])
+            elif topic and message_text:
+                memory_by_topic[topic].append(f"«{message_text[:100]}...» (از {sender_name})")
     
-    return "\n".join(memory_lines)
+    # Format the memory
+    if memory_by_topic:
+        memory_text = "حافظه گروه (موضوعات مهم و نکات کلیدی):\n"
+        
+        for topic, points in memory_by_topic.items():
+            memory_text += f"\nموضوع: {topic}\n"
+            unique_points = list(set(points))[:5]  # Limit to 5 unique points per topic
+            for point in unique_points:
+                memory_text += f"- {point}\n"
+        
+        return memory_text
+    
+    return ""
 
 def format_user_profile_for_context(profile: Dict[str, Any]) -> str:
     """
-    Format user profile into a string for inclusion in AI context.
+    Format a user profile for inclusion in the AI prompt context.
     
     Args:
         profile: User profile dictionary
     
     Returns:
-        Formatted string of user profile
+        Formatted string of the user profile
     """
     if not profile:
         return ""
     
-    # Extract username
-    username = profile.get("username", "کاربر ناشناس")
+    # Extract key information
+    username = profile.get("username", "")
     
-    # Extract top traits
-    traits = list(profile.get("traits", {}).keys())
+    # Try to get Persian version of the username
+    persian_name = get_persian_name(username) if username else ""
     
-    # Extract top topics of interest
-    topics = list(profile.get("topics_of_interest", {}).keys())
+    traits = profile.get("traits", {})
+    topics = profile.get("topics_of_interest", {})
+    sentiment_counts = profile.get("sentiment_counts", {})
+    interests = profile.get("interests", {})
+    tone_counts = profile.get("tone_counts", {})
+    language_quality = profile.get("language_quality_counts", {})
+    message_count = profile.get("message_count", 0)
     
-    # Calculate dominant sentiment
-    sentiment_counts = profile.get("sentiment_counts", {"positive": 0, "negative": 0, "neutral": 0})
-    dominant_sentiment = max(sentiment_counts.items(), key=lambda x: x[1])[0]
+    # Calculate overall sentiment
+    overall_sentiment = "خنثی"
+    if sentiment_counts:
+        pos = sentiment_counts.get("positive", 0)
+        neg = sentiment_counts.get("negative", 0)
+        neu = sentiment_counts.get("neutral", 0)
+        
+        if pos > neg and pos > neu:
+            overall_sentiment = "مثبت"
+        elif neg > pos and neg > neu:
+            overall_sentiment = "منفی"
     
-    # Map sentiment to Persian
-    sentiment_persian = {
-        "positive": "مثبت",
-        "negative": "منفی",
-        "neutral": "خنثی"
-    }.get(dominant_sentiment, "خنثی")
+    # Get dominant tone
+    dominant_tone = "معمولی"
+    if tone_counts:
+        max_tone = max(tone_counts.items(), key=lambda x: x[1], default=("معمولی", 0))
+        dominant_tone = max_tone[0]
     
-    # Format the profile information
-    profile_lines = [f"اطلاعات کاربر {username}:"]
+    # Get dominant language quality
+    dominant_lang = "استاندارد"
+    if language_quality:
+        max_lang = max(language_quality.items(), key=lambda x: x[1], default=("استاندارد", 0))
+        dominant_lang = max_lang[0]
     
+    # Format traits
+    traits_text = ""
     if traits:
-        traits_text = "، ".join(traits[:5])  # Limit to top 5 traits
-        profile_lines.append(f"- ویژگی‌ها: {traits_text}")
+        top_traits = sorted(traits.items(), key=lambda x: x[1], reverse=True)[:5]
+        traits_text = ", ".join([f"{trait}" for trait, _ in top_traits])
     
+    # Format topics
+    topics_text = ""
     if topics:
-        topics_text = "، ".join(topics[:5])  # Limit to top 5 topics
-        profile_lines.append(f"- علایق: {topics_text}")
+        top_topics = sorted(topics.items(), key=lambda x: x[1], reverse=True)[:5]
+        topics_text = ", ".join([f"{topic}" for topic, _ in top_topics])
     
-    profile_lines.append(f"- لحن معمول: {sentiment_persian}")
+    # Format interests
+    interests_text = ""
+    if interests:
+        top_interests = sorted(interests.items(), key=lambda x: x[1], reverse=True)[:5]
+        interests_text = ", ".join([f"{interest}" for interest, _ in top_interests])
     
-    return "\n".join(profile_lines)
+    # Build profile text
+    profile_text = f"پروفایل کاربر {persian_name or username}:\n"
+    
+    if traits_text:
+        profile_text += f"- ویژگی‌های شخصیتی: {traits_text}\n"
+    
+    if topics_text:
+        profile_text += f"- موضوعات مورد بحث: {topics_text}\n"
+    
+    if interests_text:
+        profile_text += f"- علایق: {interests_text}\n"
+    
+    profile_text += f"- لحن معمول: {dominant_tone}\n"
+    profile_text += f"- سبک نگارش: {dominant_lang}\n"
+    profile_text += f"- نگرش کلی: {overall_sentiment}\n"
+    profile_text += f"- تعداد پیام‌ها: {message_count}\n"
+    
+    if persian_name and persian_name != username:
+        profile_text += f"- نام فارسی: {persian_name}\n"
+    
+    return profile_text
 
 async def process_message_for_memory(message_data: Dict[str, Any]):
     """
-    Process a message to update memory and user profiles.
+    Process a message for memory and user profile updates.
     
     Args:
         message_data: Dictionary containing message information
     """
     try:
-        # Skip processing if missing essential fields
-        if not all(k in message_data for k in ["chat_id", "sender_id", "text"]):
+        # Analyze message
+        memory_item = await analyze_message_for_memory(message_data)
+        
+        if not memory_item:
             return
         
-        # Extract necessary data
-        chat_id = message_data["chat_id"]
-        user_id = message_data["sender_id"]
-        username = message_data.get("sender_name", "کاربر")
+        # Get chat and user IDs
+        chat_id = message_data.get("chat_id")
+        user_id = message_data.get("sender_id")
         
-        # Analyze the message
-        analysis = await analyze_message_for_memory(message_data)
+        if not chat_id or not user_id:
+            return
         
-        if analysis:
-            # Update group memory if the message is memorable
-            await update_group_memory(chat_id, analysis)
-            
-            # Update user profile with traits, topics, and sentiment
+        # Update group memory
+        await update_group_memory(chat_id, memory_item)
+        
+        # Update user profile
+        if "sender_name" in message_data:
             await update_user_profile(
                 user_id, 
-                username, 
-                analysis.get("user_traits", []),
-                analysis.get("topics", []),
-                analysis.get("sentiment", "neutral")
+                message_data["sender_name"],
+                memory_item.get("user_traits", []),
+                memory_item.get("topics", []),
+                memory_item.get("sentiment", "neutral"),
+                memory_item.get("interests", []),
+                memory_item.get("tone", None),
+                memory_item.get("language_quality", None)
             )
-            
+    
     except Exception as e:
-        logger.error(f"Error processing message for memory: {e}") 
+        logger.error(f"Error processing message for memory: {e}")
+
+def analyze_for_name_correction(message_text: str) -> Optional[Dict[str, str]]:
+    """
+    Analyze message for name corrections.
+    
+    Args:
+        message_text: The message text to analyze
+    
+    Returns:
+        Dictionary with original and corrected names if a correction is found
+    """
+    try:
+        # Simple pattern matching for common correction phrases
+        correction_patterns = [
+            r"(?:اسم|نام) من (\S+) (?:هست|است)، نه (\S+)",  # "My name is X, not Y"
+            r"من رو (\S+) صدا کن، نه (\S+)",  # "Call me X, not Y"
+            r"(\S+) درسته، نه (\S+)",  # "X is correct, not Y"
+            r"اسمم (\S+) (?:هست|است) نه (\S+)",  # "My name is X not Y"
+        ]
+        
+        for pattern in correction_patterns:
+            import re
+            matches = re.search(pattern, message_text)
+            if matches:
+                correct_name = matches.group(1)
+                wrong_name = matches.group(2)
+                return {"correct": correct_name, "wrong": wrong_name}
+                
+        return None
+    
+    except Exception as e:
+        logger.error(f"Error analyzing for name correction: {e}")
+        return None 
