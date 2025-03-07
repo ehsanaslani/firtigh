@@ -125,7 +125,10 @@ async def generate_ai_response(prompt: str, is_serious: bool, image_data=None, s
             "- برای *متن پررنگ* از ستاره استفاده کنید\n"
             "- برای _متن مورب_ از زیرخط استفاده کنید\n"
             "- برای `کد یا نقل قول` از بک‌تیک استفاده کنید\n"
-            "- برای [لینک‌ها](URL) از فرمت مارک‌داون استفاده کنید\n"
+            "- برای لینک‌ها، حتماً از فرمت مارک‌داون [متن لینک](URL) استفاده کنید تا لینک‌ها قابل کلیک باشند\n\n"
+            "**مهم**: هنگام قرار دادن هر لینکی در پاسخ، همیشه از فرمت [متن توضیحی](آدرس لینک) استفاده کنید. مثلا: [خبر ایسنا](https://www.isna.ir) یا [سایت رسمی](https://www.example.com). "
+            "هرگز آدرس URL را به تنهایی قرار ندهید زیرا کاربر نمی‌تواند روی آن کلیک کند. "
+            "همیشه برای آدرس URL از فرمت کلیک‌پذیر [متن](URL) استفاده کنید."
         )
         
         # Add memory context to system message if available
@@ -215,13 +218,28 @@ async def generate_ai_response(prompt: str, is_serious: bool, image_data=None, s
                     f"4. حتماً بین ۵ تا ۱۵ خبر را در پاسخ خود بیاورید\n"
                     f"5. برای هر خبر، منبع آن را ذکر کنید، مثلاً: «به گزارش [نام منبع]»\n"
                     f"6. یک خلاصه کلی و مختصر از وضعیت اخبار در پایان ارائه دهید\n"
+                    f"7. هنگام بازنویسی لینک‌ها، دقیقاً از همان فرمت [متن توضیحی](URL) استفاده کنید و مطمئن شوید آدرس URL کامل و درست است\n"
+                    f"8. هرگز آدرس URL را بدون قرار دادن در فرمت [متن](URL) ننویسید زیرا قابل کلیک نخواهد بود\n"
                 )
             else:
-                additional_context += f"\n\nنتایج جستجوی اینترنتی:\n{search_results}\n\n"
+                additional_context += (
+                    f"\n\nنتایج جستجوی اینترنتی:\n{search_results}\n\n"
+                    f"توجه: در پاسخ به سوال کاربر:\n"
+                    f"1. از اطلاعات این نتایج جستجو بهره‌گیری کنید\n"
+                    f"2. لینک‌های قابل کلیک را دقیقاً با همان فرمت [متن](URL) حفظ کنید\n"
+                    f"3. هر زمان می‌خواهید به منبعی اشاره کنید، از فرمت [عنوان منبع](لینک) استفاده کنید تا لینک قابل کلیک باشد\n"
+                    f"4. هرگز آدرس URL را به تنهایی ارائه ندهید، همیشه از فرمت [متن](URL) استفاده کنید\n"
+                )
         
         # Add web content to the prompt if available
         if web_content:
-            additional_context += f"\n\nمحتوای استخراج شده از لینک‌ها:\n{web_content}\n\n"
+            additional_context += (
+                f"\n\nمحتوای استخراج شده از لینک‌ها:\n{web_content}\n\n"
+                f"توجه: در پاسخ به سوال کاربر در مورد محتوای لینک:\n"
+                f"1. اطلاعات را خلاصه و دسته‌بندی کنید\n"
+                f"2. لینک اصلی را دقیقاً با فرمت [عنوان سایت یا صفحه](URL) در پاسخ خود قرار دهید تا قابل کلیک باشد\n"
+                f"3. اگر می‌خواهید به لینک‌های دیگری در محتوا اشاره کنید، آنها را نیز با فرمت [متن توضیحی](URL) قرار دهید\n"
+            )
         
         # Append additional context to the prompt
         if additional_context:
@@ -808,14 +826,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Try to send with Markdown formatting, but fall back to plain text if there's an error
         message_sent = False
         try:
-            # News responses need special handling to preserve links
-            if is_news_query:
+            # Check if the response contains links (markdown format)
+            contains_links = re.search(r'\[([^\]]+)\]\(([^)]+)\)', ai_response) is not None
+            
+            # Special handling for responses with links or news queries to ensure links are clickable
+            if contains_links or is_news_query:
                 try:
-                    # Use standard Markdown for news responses to ensure links work
+                    # Use standard Markdown for responses with links to ensure links work
                     await update.message.reply_text(ai_response, parse_mode=ParseMode.MARKDOWN)
                     message_sent = True
                 except Exception as e:
-                    logger.error(f"Error sending news response with Markdown: {e}")
+                    logger.error(f"Error sending response with links using Markdown: {e}")
                     # Try with HTML parsing instead which might handle links better
                     try:
                         # Convert markdown links to HTML links first (before other conversions)
@@ -830,7 +851,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         await update.message.reply_text(html_response, parse_mode=ParseMode.HTML)
                         message_sent = True
                     except Exception as e2:
-                        logger.error(f"Error sending news response with HTML: {e2}")
+                        logger.error(f"Error sending response with HTML: {e2}")
                         # Will fall back to plain text below if both approaches fail
             # Skip escape for messages that contain code blocks or complex formatting
             elif "```" in ai_response or "~~~" in ai_response:
