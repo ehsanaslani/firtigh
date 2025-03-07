@@ -198,9 +198,23 @@ async def generate_ai_response(prompt: str, is_serious: bool, image_data=None, s
         # Add additional context if available
         additional_context = ""
         
+        # Check if this is a news-related query by looking for the news header in search results
+        is_news_query = search_results and "📰 *آخرین اخبار*" in search_results
+        
         # Add search results to the prompt if available
         if search_results:
-            additional_context += f"\n\nنتایج جستجوی اینترنتی:\n{search_results}\n\n"
+            if is_news_query:
+                # Special instructions for news queries
+                additional_context += (
+                    f"\n\nنتایج جستجوی اخبار:\n{search_results}\n\n"
+                    f"توجه: برای پاسخ به این پرسش خبری، لطفا:\n"
+                    f"1. خبرها را دسته‌بندی مرتبط کنید (مثلا: سیاسی، اقتصادی، ورزشی، و غیره)\n"
+                    f"2. برای هر خبر، منبع آن را ذکر کنید\n"
+                    f"3. تاریخ انتشار خبر را در صورت وجود بیان کنید\n"
+                    f"4. یک خلاصه کلی از وضعیت اخبار در پایان ارائه دهید\n"
+                )
+            else:
+                additional_context += f"\n\nنتایج جستجوی اینترنتی:\n{search_results}\n\n"
         
         # Add web content to the prompt if available
         if web_content:
@@ -210,10 +224,13 @@ async def generate_ai_response(prompt: str, is_serious: bool, image_data=None, s
         if additional_context:
             prompt = f"{prompt}\n\n--- اطلاعات تکمیلی ---\n{additional_context}"
         
+        # Set max tokens based on query type - news queries need more space
+        max_tokens = 1000 if is_news_query else 500
+        
         response = openai.ChatCompletion.create(
             model=model,
             messages=messages,
-            max_tokens=500,
+            max_tokens=max_tokens,
             temperature=0.8,  # Slightly higher temperature for more creative responses
         )
         return response.choices[0].message.content.strip()

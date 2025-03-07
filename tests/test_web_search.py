@@ -135,12 +135,16 @@ class TestWebSearch(unittest.TestCase):
             {
                 "title": "Test Title 1",
                 "link": "https://example.com/1",
-                "snippet": "This is test snippet 1"
+                "snippet": "This is test snippet 1",
+                "source": "example.com",
+                "date": ""
             },
             {
                 "title": "Test Title 2",
                 "link": "https://example.com/2",
-                "snippet": "This is test snippet 2"
+                "snippet": "This is test snippet 2",
+                "source": "example.com",
+                "date": ""
             }
         ]
         
@@ -203,33 +207,47 @@ class TestWebSearch(unittest.TestCase):
                 {
                     "title": "Test News Item",
                     "link": "https://example.com/news",
-                    "snippet": "This is a test news item."
+                    "snippet": "This is a test news item.",
+                    "pagemap": {
+                        "metatags": [
+                            {
+                                "og:article:published_time": "2025-03-07T12:00:00Z"
+                            }
+                        ]
+                    }
                 }
             ]
         }
         mock_get.return_value = mock_response
         
         # Call with a news query
-        self.run_async(web_search.search_web("اخبار ایران"))
+        results = self.run_async(web_search.search_web("اخبار ایران"))
+        
+        # Check that the results include the source field
+        self.assertEqual(results[0]["source"], "example.com")
         
         # Check that the query was modified to include Persian news sites
         call_args = mock_get.call_args[1]['params']
         self.assertIn("site:", call_args['q'])
         # Should have the original query and site: directives
         self.assertIn("(اخبار ایران)", call_args['q'])
-        
+    
     def test_format_search_results_for_news(self):
         """Test formatting of search results for news queries."""
         test_results = [
             {
                 "title": "Test News Item 1",
                 "link": "https://example.com/news/1",
-                "snippet": "This is test news item 1."
+                "snippet": "This is test news item 1.",
+                "source": "example.com",
+                "date": "2025-03-07T12:34:56Z"
             },
             {
                 "title": "Test News Item 2",
                 "link": "https://example.com/news/2",
-                "snippet": "This is test news item 2."
+                "snippet": "This is test news item 2.",
+                "source": "example.com",
+                "date": "2025-03-07T10:30:00Z"
             }
         ]
         
@@ -241,7 +259,7 @@ class TestWebSearch(unittest.TestCase):
         # Format as news search results
         news_format = web_search.format_search_results(test_results, is_news=True)
         self.assertIn("*آخرین اخبار*", news_format)
-        self.assertIn("نتایج از منابع خبری فارسی‌زبان", news_format)
+        self.assertIn("*منبع*: example.com", news_format)
 
 if __name__ == "__main__":
     unittest.main() 

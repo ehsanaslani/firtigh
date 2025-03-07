@@ -55,7 +55,7 @@ async def search_web(query: str, num_results: int = 5) -> List[Dict[str, str]]:
     
     Args:
         query: The search query
-        num_results: Number of results to return (max 10)
+        num_results: Number of results to return (max 10 per request)
     
     Returns:
         List of search results with title, link, and snippet
@@ -74,40 +74,64 @@ async def search_web(query: str, num_results: int = 5) -> List[Dict[str, str]]:
                  "snippet": "Web search is not configured. Please set GOOGLE_SEARCH_ENGINE_ID and GOOGLE_API_KEY environment variables."}]
     
     try:
-        # Cap num_results to 10 (Google CSE API limit per request)
-        num_results = min(num_results, 10)
-        
-        # Build request URL
-        url = f"https://www.googleapis.com/customsearch/v1"
-        params = {
-            "key": GOOGLE_API_KEY,
-            "cx": SEARCH_ENGINE_ID,
-            "q": query,
-            "num": num_results
-        }
-        
-        # For news queries, prioritize Persian news sources
+        # For news queries, we want more results (up to 15)
         is_news = await is_news_query(query)
-        if is_news:
-            logger.info(f"Detected news query: {query}, prioritizing Persian news sources")
-            # Add Persian news sites to the query for news-related searches
-            # This creates a biased query that will prioritize these sites
-            persian_sites_query = " OR ".join([f"site:{site}" for site in PERSIAN_NEWS_SOURCES[:5]])
-            params["q"] = f"({query}) ({persian_sites_query})"
+        max_results = 15 if is_news else num_results
         
-        # Make the request
-        response = requests.get(url, params=params)
-        results = response.json()
-        
-        # Extract and format the results
+        # Google CSE API has a limit of 10 results per request, so we may need multiple requests
         formatted_results = []
-        if "items" in results:
-            for item in results["items"]:
-                formatted_results.append({
-                    "title": item.get("title", "No title"),
-                    "link": item.get("link", ""),
-                    "snippet": item.get("snippet", "No description")
-                })
+        
+        # Number of results to fetch in this iteration
+        batch_size = min(10, max_results)
+        start_index = 1
+        
+        while len(formatted_results) < max_results:
+            # Build request URL
+            url = f"https://www.googleapis.com/customsearch/v1"
+            params = {
+                "key": GOOGLE_API_KEY,
+                "cx": SEARCH_ENGINE_ID,
+                "q": query,
+                "num": batch_size,
+                "start": start_index
+            }
+            
+            # For news queries, prioritize Persian news sources
+            if is_news:
+                logger.info(f"Detected news query: {query}, prioritizing Persian news sources")
+                # Add Persian news sites to the query for news-related searches
+                # This creates a biased query that will prioritize these sites
+                persian_sites_query = " OR ".join([f"site:{site}" for site in PERSIAN_NEWS_SOURCES[:5]])
+                params["q"] = f"({query}) ({persian_sites_query})"
+            
+            # Make the request
+            response = requests.get(url, params=params)
+            results = response.json()
+            
+            # Extract and format the results
+            if "items" in results:
+                for item in results["items"]:
+                    # Extract source domain from URL
+                    source_url = item.get("link", "")
+                    try:
+                        source = source_url.split("://")[1].split("/")[0]
+                    except:
+                        source = "unknown source"
+                    
+                    formatted_results.append({
+                        "title": item.get("title", "No title"),
+                        "link": source_url,
+                        "snippet": item.get("snippet", "No description"),
+                        "source": source,
+                        "date": item.get("pagemap", {}).get("metatags", [{}])[0].get("og:article:published_time", "")
+                    })
+            
+            # Break the loop if we got fewer results than requested or reached our limit
+            if "items" not in results or len(results["items"]) < batch_size or len(formatted_results) >= max_results:
+                break
+                
+            # Update start index for the next page
+            start_index += batch_size
         
         # For news queries with no results, try again without Persian site restrictions
         if is_news and not formatted_results:
@@ -118,16 +142,26 @@ async def search_web(query: str, num_results: int = 5) -> List[Dict[str, str]]:
             
             if "items" in results:
                 for item in results["items"]:
+                    # Extract source domain from URL
+                    source_url = item.get("link", "")
+                    try:
+                        source = source_url.split("://")[1].split("/")[0]
+                    except:
+                        source = "unknown source"
+                        
                     formatted_results.append({
                         "title": item.get("title", "No title"),
-                        "link": item.get("link", ""),
-                        "snippet": item.get("snippet", "No description")
+                        "link": source_url,
+                        "snippet": item.get("snippet", "No description"),
+                        "source": source,
+                        "date": item.get("pagemap", {}).get("metatags", [{}])[0].get("og:article:published_time", "")
                     })
         
         # Increment search usage count
         usage_limits.increment_search_usage()
         
-        return formatted_results
+        # Limit to max_results
+        return formatted_results[:max_results]
     except Exception as e:
         logger.error(f"Error searching the web: {e}")
         return [{"title": "Search Error", 
@@ -150,16 +184,37 @@ def format_search_results(results: List[Dict[str, str]], is_news: bool = False) 
     
     if is_news:
         formatted_text = "📰 *آخرین اخبار*:\n\n"
+        
+        # News items with better formatting
+        for i, result in enumerate(results, 1):
+            # Clean up title (remove site name if it appears at the end)
+            title = result['title']
+            source = result['source']
+            if " - " in title and source.lower() in title.lower().split(" - ")[-1]:
+                title = " - ".join(title.split(" - ")[:-1])
+                
+            # Format date if available
+            date_str = ""
+            if result.get('date'):
+                try:
+                    from datetime import datetime
+                    date_obj = datetime.fromisoformat(result['date'].replace('Z', '+00:00'))
+                    date_str = f" ({date_obj.strftime('%Y-%m-%d')})"
+                except:
+                    pass
+                    
+            formatted_text += f"{i}. *{title}*{date_str}\n"
+            formatted_text += f"   *منبع*: {source}\n"
+            formatted_text += f"   {result['snippet']}\n"
+            formatted_text += f"   {result['link']}\n\n"
+            
     else:
         formatted_text = "🔍 *نتایج جستجو*:\n\n"
-    
-    for i, result in enumerate(results, 1):
-        formatted_text += f"{i}. *{result['title']}*\n"
-        formatted_text += f"   {result['link']}\n"
-        formatted_text += f"   {result['snippet']}\n\n"
-    
-    if is_news:
-        formatted_text += "🔍 *توجه*: نتایج از منابع خبری فارسی‌زبان استخراج شده است."
+        
+        for i, result in enumerate(results, 1):
+            formatted_text += f"{i}. *{result['title']}*\n"
+            formatted_text += f"   {result['link']}\n"
+            formatted_text += f"   {result['snippet']}\n\n"
     
     return formatted_text
 

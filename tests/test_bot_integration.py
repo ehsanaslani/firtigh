@@ -162,5 +162,111 @@ def test_generate_ai_response_error(mock_create):
     result = run_async(bot.generate_ai_response("Test prompt", True, chat_id=123456, user_id=789012))
     assert "متأسفم" in result
 
+@patch('bot.web_search.is_news_query')
+@patch('bot.web_search.search_web')
+@patch('bot.web_search.format_search_results')
+@patch('bot.generate_ai_response')
+def test_news_query_single_response(mock_generate_ai, mock_format_results, mock_search_web, mock_is_news_query, 
+                                  mock_update, mock_context):
+    """Test that news queries don't result in duplicate responses."""
+    # Set up the test
+    mock_update.message.text = "@firtigh اخبار امروز چیه؟"
+    
+    # Mock is_search_request to return True
+    with patch('bot.web_search.is_search_request', return_value=True):
+        # Mock is_news_query to identify this as a news query
+        async def mock_is_news(*args, **kwargs):
+            return True
+        mock_is_news_query.side_effect = mock_is_news
+        
+        # Mock the search_web function
+        async def mock_search(*args, **kwargs):
+            return [{"title": "Test News", "link": "https://example.com", "snippet": "This is a test news item"}]
+        mock_search_web.side_effect = mock_search
+        
+        # Mock format_search_results
+        mock_format_results.return_value = "Test News - This is a test news item - https://example.com"
+        
+        # Mock generate_ai_response
+        async def mock_ai_response(*args, **kwargs):
+            return "Here's the news: Test News from https://example.com"
+        mock_generate_ai.side_effect = mock_ai_response
+        
+        # Set up the context's bot username
+        mock_context.bot.username = "firtigh"
+        mock_context.bot.id = 12345
+        
+        # Call the handler
+        run_async(bot.handle_message(mock_update, mock_context))
+        
+        # Check that message.reply_text was called the correct number of times:
+        # 1. First call for "در حال جستجوی اخبار..."
+        # 2. Second call for the AI response (only once, not duplicated)
+        assert mock_update.message.reply_text.call_count == 2
+        
+        # Check first call is the "searching for news" message
+        first_call_args = mock_update.message.reply_text.call_args_list[0][0][0]
+        assert "در حال جستجوی اخبار" in first_call_args
+        
+        # Verify that the second call is the AI response
+        second_call_args = mock_update.message.reply_text.call_args_list[1][0][0]
+        assert "Here's the news" in second_call_args
+
+@patch('bot.escape_markdown_v2')
+@patch('bot.generate_ai_response')
+def test_message_formatting_error_handling(mock_generate_ai, mock_escape_markdown, mock_update, mock_context):
+    """Test that when message formatting fails, we still only get one response."""
+    # Set up the test
+    mock_update.message.text = "@firtigh tell me something"
+    
+    # Mock generate_ai_response to return a message with formatting
+    async def mock_ai_response(*args, **kwargs):
+        return "Here is a *formatted* message with [link](http://example.com)"
+    mock_generate_ai.side_effect = mock_ai_response
+    
+    # Mock escape_markdown_v2 to raise an exception (simulating a formatting error)
+    mock_escape_markdown.side_effect = Exception("Formatting error")
+    
+    # Set up the context's bot username
+    mock_context.bot.username = "firtigh"
+    mock_context.bot.id = 12345
+    
+    # Call the handler
+    run_async(bot.handle_message(mock_update, mock_context))
+    
+    # Check that message.reply_text was called only once (the fallback, not duplicated)
+    # In this case, we expect only one call since the first attempt fails and we use the fallback
+    assert mock_update.message.reply_text.call_count == 1
+    
+    # Verify that the call is the AI response without formatting
+    call_args = mock_update.message.reply_text.call_args[0][0]
+    assert "Here is a" in call_args
+
+@patch('bot.generate_ai_response')
+def test_code_block_formatting(mock_generate_ai, mock_update, mock_context):
+    """Test that messages with code blocks are formatted correctly and only sent once."""
+    # Set up the test
+    mock_update.message.text = "@firtigh show me some code"
+    
+    # Mock generate_ai_response to return a message with code blocks
+    async def mock_ai_response(*args, **kwargs):
+        return "Here is some Python code:\n```python\ndef hello():\n    print('Hello world!')\n```"
+    mock_generate_ai.side_effect = mock_ai_response
+    
+    # Set up the context's bot username
+    mock_context.bot.username = "firtigh"
+    mock_context.bot.id = 12345
+    
+    # Call the handler
+    run_async(bot.handle_message(mock_update, mock_context))
+    
+    # Check that message.reply_text was called only once
+    assert mock_update.message.reply_text.call_count == 1
+    
+    # Verify that the call has the correct message and formatting
+    call_args = mock_update.message.reply_text.call_args
+    assert "Here is some Python code" in call_args[0][0]
+    assert call_args[1]["parse_mode"] == "Markdown"  # Standard Markdown for code blocks
+
 if __name__ == '__main__':
     pytest.main() 
