@@ -24,23 +24,17 @@ def run_async(coroutine):
 
 @patch('aiohttp.ClientSession.get')
 def test_usd_irr_rate_fetching(mock_get):
-    """Test fetching USD/IRR exchange rate from tgju.org."""
+    """Test fetching USD/IRR exchange rate from alanchand.com."""
     # Create a mock response
     mock_response = AsyncMock()
     mock_response.status = 200
     mock_response.text = AsyncMock(return_value="""
         <html>
             <body>
-                <table class="market-table">
-                    <tr>
-                        <td>First column</td>
-                        <td>890,500</td>
-                        <td>Third</td>
-                        <td>Fourth</td>
-                        <td>Fifth</td>
-                        <td>2.5%</td>
-                    </tr>
-                </table>
+                <div data-currency="USD">
+                    <span class="currency-price">890,500</span>
+                    <span class="currency-change">2.5%</span>
+                </div>
             </body>
         </html>
     """)
@@ -56,7 +50,7 @@ def test_usd_irr_rate_fetching(mock_get):
     assert result["currency"] == "USD/IRR"
     assert result["current_rate"] == "890500"  # Commas should be removed
     assert result["change_percent"] == "2.5%"
-    assert result["source"] == "tgju.org"
+    assert result["source"] == "alanchand.com"
     assert "timestamp" in result
 
 def test_rate_data_formatting():
@@ -67,8 +61,8 @@ def test_rate_data_formatting():
         "currency": "USD/IRR",
         "current_rate": "890500",
         "change_percent": "2.5%",
-        "source": "tgju.org",
-        "source_url": "https://www.tgju.org",
+        "source": "alanchand.com",
+        "source_url": "https://alanchand.com/",
         "timestamp": "2023-01-01T12:00:00"
     }
     
@@ -78,7 +72,7 @@ def test_rate_data_formatting():
     assert "نرخ دلار آمریکا به ریال" in formatted
     assert "890,500" in formatted  # Should be formatted with commas
     assert "2.5%" in formatted
-    assert "tgju.org" in formatted
+    assert "alanchand.com" in formatted
     assert "2023-01-01" in formatted
     
     # Test with failed result
@@ -100,8 +94,8 @@ def test_usd_toman_rate(mock_irr_rate):
         "currency": "USD/IRR",
         "current_rate": "890500",
         "change_percent": "2.5%",
-        "source": "tgju.org",
-        "source_url": "https://www.tgju.org",
+        "source": "alanchand.com",
+        "source_url": "https://alanchand.com/",
         "timestamp": "2023-01-01T12:00:00"
     }
     

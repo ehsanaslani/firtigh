@@ -767,7 +767,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                             f"💵 *نرخ دلار آمریکا به تومان*\n\n"
                             f"نرخ فعلی: *{formatted_rate} تومان*\n"
                             f"تغییرات: {result.get('change_percent', 'N/A')}\n"
-                            f"منبع: [tgju.org]({result.get('source_url', 'https://www.tgju.org')})"
+                            f"منبع: [alanchand.com]({result.get('source_url', 'https://alanchand.com/')})"
                         )
                         
                         await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
@@ -1036,8 +1036,7 @@ async def toman_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 f"💵 *نرخ دلار آمریکا به تومان*\n\n"
                 f"نرخ فعلی: *{formatted_rate} تومان*\n"
                 f"تغییرات: {result.get('change_percent', 'N/A')}\n"
-                f"منبع: [tgju.org]({result.get('source_url', 'https://www.tgju.org')})\n"
-                f"زمان به‌روزرسانی: {datetime.datetime.fromisoformat(result.get('timestamp', datetime.datetime.now().isoformat())).strftime('%Y-%m-%d %H:%M:%S')}"
+                f"منبع: [alanchand.com]({result.get('source_url', 'https://alanchand.com/')})"
             )
             
             await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)

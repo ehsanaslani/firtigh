@@ -3,15 +3,16 @@ import aiohttp
 from bs4 import BeautifulSoup
 from datetime import datetime
 import re
+import json
 
 logger = logging.getLogger(__name__)
 
 async def get_usd_irr_rate() -> dict:
     """
-    Fetch USD to IRR exchange rate from tgju.org
+    Fetch USD to IRR exchange rate from alanchand.com
     Returns a dictionary with current rate and related information
     """
-    url = "https://www.tgju.org/profile/price_dollar_rl"
+    url = "https://alanchand.com/"
     
     try:
         async with aiohttp.ClientSession() as session:
@@ -29,42 +30,40 @@ async def get_usd_irr_rate() -> dict:
         soup = BeautifulSoup(html, 'html.parser')
         
         try:
-            # First look for the current rate in the market data table
+            # Find the USD rate information on alanchand.com
             current_rate = None
             change_amount = None
             change_percent = None
             
-            # Try to find the market table that contains price data
-            market_table = soup.select_one("table.market-table")
-            if market_table:
-                # Extract data from the first row of the table (current price)
-                first_row = market_table.select_one("tr:first-child")
-                if first_row:
-                    cells = first_row.select("td")
-                    if len(cells) >= 6:
-                        current_rate = cells[1].text.strip()
-                        change_percent = cells[5].text.strip()
-                        
-            # If we didn't find the data in the market table, try other selectors
-            if not current_rate:
-                # Try to find the price in the info box (sometimes used by tgju)
-                price_box = soup.select_one(".info-price")
-                if price_box:
-                    current_rate = price_box.text.strip()
+            # Look for the USD rate - this will need to be updated based on alanchand.com's structure
+            # Since alanchand.com might have a different structure, we'll look for USD data
+            usd_element = soup.select_one("[data-currency='USD']")
+            if usd_element:
+                price_element = usd_element.select_one(".currency-price")
+                if price_element:
+                    current_rate = price_element.text.strip()
                 
-                # Try to find the change percentage in the info box
-                change_box = soup.select_one(".info-change")
-                if change_box:
-                    change_text = change_box.text.strip()
+                # Try to find change percentage if available
+                change_element = usd_element.select_one(".currency-change")
+                if change_element:
+                    change_text = change_element.text.strip()
                     match = re.search(r'([\d.]+)%', change_text)
                     if match:
                         change_percent = match.group(0)
             
-            # If we still didn't find the rate, try the mobile view
+            # If we didn't find the element with the specific selector, try a more general approach
             if not current_rate:
-                mobile_price = soup.select_one(".price")
-                if mobile_price:
-                    current_rate = mobile_price.text.strip()
+                # Look for any element containing USD rate information
+                usd_elements = soup.find_all(string=re.compile(r'USD|دلار|Dollar', re.IGNORECASE))
+                for element in usd_elements:
+                    parent = element.parent
+                    if parent:
+                        # Look for numbers near this element
+                        price_text = parent.get_text()
+                        price_match = re.search(r'[\d,]+', price_text)
+                        if price_match:
+                            current_rate = price_match.group(0)
+                            break
             
             # Clean up the current rate (remove commas and non-numeric chars)
             if current_rate:
@@ -84,7 +83,7 @@ async def get_usd_irr_rate() -> dict:
                 "currency": "USD/IRR",
                 "current_rate": current_rate,
                 "change_percent": change_percent,
-                "source": "tgju.org",
+                "source": "alanchand.com",
                 "source_url": url,
                 "timestamp": datetime.now().isoformat()
             }
@@ -152,7 +151,7 @@ def format_exchange_rate_result(result: dict) -> str:
         f"💵 *نرخ دلار آمریکا به ریال*\n\n"
         f"نرخ فعلی: *{formatted_rate} ریال*\n"
         f"تغییرات: {change_formatted}\n"
-        f"منبع: [tgju.org]({result.get('source_url', 'https://www.tgju.org')})\n"
+        f"منبع: [alanchand.com]({result.get('source_url', 'https://alanchand.com/')})\n"
         f"زمان به‌روزرسانی: {time_formatted}"
     )
     
