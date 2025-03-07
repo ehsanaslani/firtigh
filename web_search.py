@@ -182,8 +182,13 @@ def format_search_results(results: List[Dict[str, str]], is_news: bool = False) 
     if not results:
         return "جستجو نتیجه‌ای نداشت. 🔍"
     
+    # Ensure we have at least 5 results but not more than 15 for news
     if is_news:
-        formatted_text = "📰 *آخرین اخبار*:\n\n"
+        min_results = min(5, len(results))
+        max_results = min(15, len(results))
+        results = results[0:max_results]
+        
+        formatted_text = f"📰 *آخرین اخبار* ({len(results)} مورد):\n\n"
         
         # News items with better formatting
         for i, result in enumerate(results, 1):
@@ -202,18 +207,29 @@ def format_search_results(results: List[Dict[str, str]], is_news: bool = False) 
                     date_str = f" ({date_obj.strftime('%Y-%m-%d')})"
                 except:
                     pass
-                    
+            
+            # Format link as markdown link for clickability
+            link = result['link']
+            
+            # Line 1: Number and title with date
             formatted_text += f"{i}. *{title}*{date_str}\n"
-            formatted_text += f"   *منبع*: {source}\n"
+            
+            # Line 2: Source with emoji
+            formatted_text += f"   📄 *منبع*: {source}\n"
+            
+            # Line 3: Snippet
             formatted_text += f"   {result['snippet']}\n"
-            formatted_text += f"   {result['link']}\n\n"
+            
+            # Line 4: Link as clickable markdown link
+            formatted_text += f"   🔗 [مشاهده خبر کامل]({link})\n\n"
             
     else:
         formatted_text = "🔍 *نتایج جستجو*:\n\n"
         
         for i, result in enumerate(results, 1):
             formatted_text += f"{i}. *{result['title']}*\n"
-            formatted_text += f"   {result['link']}\n"
+            # Format link as markdown link for clickability
+            formatted_text += f"   🔗 [مشاهده لینک]({result['link']})\n"
             formatted_text += f"   {result['snippet']}\n\n"
     
     return formatted_text

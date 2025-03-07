@@ -4,6 +4,7 @@ from unittest.mock import patch, MagicMock
 import json
 import sys
 import asyncio
+import re
 
 # Add parent directory to path so we can import modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -260,6 +261,40 @@ class TestWebSearch(unittest.TestCase):
         news_format = web_search.format_search_results(test_results, is_news=True)
         self.assertIn("*آخرین اخبار*", news_format)
         self.assertIn("*منبع*: example.com", news_format)
+
+    def test_news_results_count_and_links(self):
+        """Test that news results include the correct number of items and properly formatted links."""
+        # Create a list of 20 test news items
+        test_results = []
+        for i in range(20):
+            test_results.append({
+                "title": f"Test News Item {i+1}",
+                "link": f"https://example.com/news/{i+1}",
+                "snippet": f"This is test news item {i+1}.",
+                "source": "example.com",
+                "date": "2025-03-07T12:34:56Z"
+            })
+        
+        # Format as news search results
+        news_format = web_search.format_search_results(test_results, is_news=True)
+        
+        # Count the number of items included (should be limited to 15 max)
+        link_pattern = r'\[مشاهده خبر کامل\]\(https://example\.com/news/\d+\)'
+        link_matches = re.findall(link_pattern, news_format)
+        
+        # Should have at most 15 items
+        self.assertLessEqual(len(link_matches), 15, "Should have at most 15 news items")
+        
+        # Should have at least 5 items if available
+        self.assertGreaterEqual(len(link_matches), 5, "Should have at least 5 news items if available")
+        
+        # Verify that links are formatted as markdown links
+        self.assertTrue(all('[مشاهده خبر کامل](' in link for link in link_matches), 
+                        "Links should be formatted as markdown links")
+        
+        # Check that the results count is displayed in the header
+        self.assertIn(f"({len(link_matches)} مورد)", news_format, 
+                      "Results count should be displayed in the header")
 
 if __name__ == "__main__":
     unittest.main() 

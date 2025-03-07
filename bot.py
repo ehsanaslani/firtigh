@@ -18,6 +18,7 @@ import web_extractor
 import usage_limits
 import memory
 import exchange_rates  # Import the new exchange_rates module
+import re
 
 # Load environment variables from .env file
 load_dotenv()
@@ -208,10 +209,12 @@ async def generate_ai_response(prompt: str, is_serious: bool, image_data=None, s
                 additional_context += (
                     f"\n\nنتایج جستجوی اخبار:\n{search_results}\n\n"
                     f"توجه: برای پاسخ به این پرسش خبری، لطفا:\n"
-                    f"1. خبرها را دسته‌بندی مرتبط کنید (مثلا: سیاسی، اقتصادی، ورزشی، و غیره)\n"
-                    f"2. برای هر خبر، منبع آن را ذکر کنید\n"
-                    f"3. تاریخ انتشار خبر را در صورت وجود بیان کنید\n"
-                    f"4. یک خلاصه کلی از وضعیت اخبار در پایان ارائه دهید\n"
+                    f"1. تمام منابع خبری مذکور (با علامت 📄 منبع:) و لینک‌ها را دقیقاً همانطور که در نتایج جستجو آمده حفظ کنید\n"
+                    f"2. خبرها را دسته‌بندی کنید (مثلا سیاسی، اقتصادی، ورزشی)\n"
+                    f"3. لینک‌های خبرها را که با فرمت [مشاهده خبر کامل](URL) ارائه شده‌اند، دقیقاً حفظ کنید تا قابل کلیک باشند\n"
+                    f"4. حتماً بین ۵ تا ۱۵ خبر را در پاسخ خود بیاورید\n"
+                    f"5. برای هر خبر، منبع آن را ذکر کنید، مثلاً: «به گزارش [نام منبع]»\n"
+                    f"6. یک خلاصه کلی و مختصر از وضعیت اخبار در پایان ارائه دهید\n"
                 )
             else:
                 additional_context += f"\n\nنتایج جستجوی اینترنتی:\n{search_results}\n\n"
@@ -651,6 +654,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Initialize variables for web search and link content
         search_results = None
         web_content = None
+        is_news_query = False  # Initialize is_news_query variable
         
         # Check if this is a search request
         if await web_search.is_search_request(query):
@@ -675,15 +679,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_chat_action("typing")
             
             # Check if it's a news query
-            is_news_search = await web_search.is_news_query(search_query)
-            if is_news_search:
+            is_news_query = await web_search.is_news_query(search_query)
+            if is_news_query:
                 await update.message.reply_text(f"در حال جستجوی اخبار برای: «{search_query}» در منابع خبری فارسی 📰")
             else:
                 await update.message.reply_text(f"در حال جستجوی اینترنت برای: «{search_query}» 🔍")
             
             # Perform the search
             search_result_data = await web_search.search_web(search_query)
-            search_results = web_search.format_search_results(search_result_data, is_news=is_news_search)
+            search_results = web_search.format_search_results(search_result_data, is_news=is_news_query)
             
             # Increment search usage count
             usage_limits.increment_search_usage()
@@ -804,8 +808,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Try to send with Markdown formatting, but fall back to plain text if there's an error
         message_sent = False
         try:
+            # News responses need special handling to preserve links
+            if is_news_query:
+                try:
+                    # Use standard Markdown for news responses to ensure links work
+                    await update.message.reply_text(ai_response, parse_mode=ParseMode.MARKDOWN)
+                    message_sent = True
+                except Exception as e:
+                    logger.error(f"Error sending news response with Markdown: {e}")
+                    # Try with HTML parsing instead which might handle links better
+                    try:
+                        # Convert markdown links to HTML links first (before other conversions)
+                        html_response = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', ai_response)
+                        
+                        # Convert other markdown formatting to HTML
+                        html_response = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', html_response)  # Bold **text**
+                        html_response = re.sub(r'\*([^*]+)\*', r'<b>\1</b>', html_response)      # Bold *text*
+                        html_response = re.sub(r'\_([^_]+)\_', r'<i>\1</i>', html_response)      # Italic _text_
+                        
+                        # Send with HTML parsing
+                        await update.message.reply_text(html_response, parse_mode=ParseMode.HTML)
+                        message_sent = True
+                    except Exception as e2:
+                        logger.error(f"Error sending news response with HTML: {e2}")
+                        # Will fall back to plain text below if both approaches fail
             # Skip escape for messages that contain code blocks or complex formatting
-            if "```" in ai_response or "~~~" in ai_response:
+            elif "```" in ai_response or "~~~" in ai_response:
                 # Try sending with regular Markdown first
                 await update.message.reply_text(ai_response, parse_mode=ParseMode.MARKDOWN)
                 message_sent = True
