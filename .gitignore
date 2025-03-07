@@ -38,6 +38,11 @@ env/
 data/
 *.json
 
+# Deployment scripts (containing sensitive information)
+deploy.sh
+update_heroku_config.sh
+*.sh
+
 # Distribution / packaging
 dist/
 build/

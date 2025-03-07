@@ -6,6 +6,11 @@ Firtigh is a Telegram bot that uses AI to generate responses when mentioned in a
 
 - Responds to mentions (`@@firtigh`) in group chats
 - Generates AI-powered responses using OpenAI's GPT model
+- Summarizes chat history from group discussions
+- Searches the web for real-time information
+- Extracts and analyzes content from shared links
+- Processes and analyzes images and GIFs
+- Uses Persian language with customizable personality
 - Easy to deploy and configure
 
 ## Prerequisites
@@ -49,6 +54,10 @@ cp .env.example .env
 2. Open the `.env` file and replace the placeholder values:
    - `TELEGRAM_TOKEN`: The token you received from BotFather
    - `OPENAI_API_KEY`: Your OpenAI API key (get one from [OpenAI's website](https://platform.openai.com/account/api-keys))
+   - `GOOGLE_API_KEY`: (Optional) For web search functionality (get from [Google Cloud Console](https://console.cloud.google.com/))
+   - `GOOGLE_SEARCH_ENGINE_ID`: (Optional) For web search functionality (create at [Programmable Search Engine](https://programmablesearchengine.google.com/))
+   - `DAILY_SEARCH_LIMIT`: Maximum number of web searches per day (default: 50)
+   - `DAILY_MEDIA_LIMIT`: Maximum number of image/video analyses per day (default: 10)
 
 ## Running the Bot
 
@@ -92,6 +101,10 @@ worker: python bot.py
 ```bash
 heroku config:set TELEGRAM_TOKEN=your_telegram_bot_token
 heroku config:set OPENAI_API_KEY=your_openai_api_key
+heroku config:set GOOGLE_API_KEY=your_google_api_key
+heroku config:set GOOGLE_SEARCH_ENGINE_ID=your_search_engine_id
+heroku config:set DAILY_SEARCH_LIMIT=50
+heroku config:set DAILY_MEDIA_LIMIT=10
 ```
 
 6. Deploy to Heroku:
@@ -119,6 +132,26 @@ heroku ps:scale worker=1
 2. For example: "@@firtigh What's the weather like today?"
 3. The bot will process your message and reply with an AI-generated response
 
+### Special Features
+
+- **Chat History Summarization**: Ask the bot to summarize recent group conversations
+  - Example: "@@firtigh خلاصه گفتگوهای سه روز اخیر چیه؟" (What's the summary of discussions in the last three days?)
+  - Supports different time periods (1 day, 3 days, 1 week, etc.)
+
+- **Web Search**: Ask the bot to search the internet for information
+  - Example: "@@firtigh جستجو کن آخرین اخبار ایران" (Search for the latest news about Iran)
+  - Use keywords like "جستجو", "search", "سرچ", or "گوگل" to trigger a search
+
+- **Link Analysis**: Send a URL and the bot will extract and analyze its content
+  - Example: "@@firtigh نظرت در مورد این مقاله چیه؟ https://example.com/article"
+  - Works with most standard websites (may have limitations with JavaScript-heavy sites)
+
+- **Image and GIF Analysis**: Send media with your query and the bot will analyze it
+  - Example: Send an image and ask "@@firtigh این عکس چیه؟" (What is this picture?)
+  
+- **Persian Language Support**: The bot is optimized for Persian language interactions
+  - Will try to address users by the Persian equivalent of their names
+
 ## Commands
 
 - `/start` - Introduces the bot and explains how to use it
@@ -126,7 +159,12 @@ heroku ps:scale worker=1
 
 ## Customization
 
-You can customize the bot's AI responses by modifying the `generate_ai_response` function in `bot.py`. You can change the model, temperature, and other parameters to adjust the AI's behavior.
+You can customize the bot's behavior by modifying the following:
+
+- **AI Personality**: Edit the system message in `generate_ai_response` function
+- **Search Settings**: Adjust daily limits in `.env` file
+- **Message History**: Control how many messages are stored in `database.py`
+- **Language Support**: Improve Persian name handling and responses
 
 ## Troubleshooting
 

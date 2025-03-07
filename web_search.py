@@ -4,6 +4,7 @@ import logging
 import requests
 from dotenv import load_dotenv
 from typing import List, Dict, Any, Optional
+import usage_limits
 
 # Load environment variables
 load_dotenv()
@@ -25,6 +26,13 @@ async def search_web(query: str, num_results: int = 5) -> List[Dict[str, str]]:
     Returns:
         List of search results with title, link, and snippet
     """
+    # Check if we've reached the daily search limit
+    if not usage_limits.can_use_search():
+        logger.warning("Daily search limit reached, returning error message")
+        return [{"title": "Search Limit Reached", 
+                 "link": "", 
+                 "snippet": "روزانه فقط تعداد محدودی جستجو امکان‌پذیر است. لطفا فردا دوباره امتحان کنید. 🔍"}]
+                 
     if not SEARCH_ENGINE_ID or not GOOGLE_API_KEY:
         logger.error("Google Search API credentials not configured")
         return [{"title": "Search Error", 
@@ -57,6 +65,9 @@ async def search_web(query: str, num_results: int = 5) -> List[Dict[str, str]]:
                     "link": item.get("link", ""),
                     "snippet": item.get("snippet", "No description")
                 })
+        
+        # Increment search usage count
+        usage_limits.increment_search_usage()
         
         return formatted_results
     except Exception as e:

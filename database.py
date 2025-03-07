@@ -40,6 +40,11 @@ def save_message(message_data: Dict[str, Any]) -> bool:
         # Add new message
         data["messages"].append(message_data)
         
+        # Limit to the most recent 1000 messages
+        if len(data["messages"]) > 1000:
+            data["messages"] = data["messages"][-1000:]
+            logger.info("Trimmed message history to 1000 most recent messages")
+        
         # Write updated data
         with open(MESSAGES_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)

@@ -14,6 +14,7 @@ import database
 import summarizer
 import web_search
 import web_extractor
+import usage_limits
 
 # Load environment variables from .env file
 load_dotenv()
@@ -450,18 +451,38 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         has_media = False
         media_description = ""
 
-        # Handle photos
+        # Handle photos - add usage limits
         if update.message.photo:
             logger.info("Message contains photo")
+            
+            # Check if we've reached daily media processing limit
+            if not usage_limits.can_process_media():
+                await update.message.reply_text(
+                    "متأسفانه به محدودیت روزانه پردازش تصاویر رسیده‌ایم. لطفا فردا دوباره امتحان کنید. 🖼️"
+                )
+                return
+                
             has_media = True
             media_description = "[تصویر] "
             # Get the largest photo (last in the array)
             photo = update.message.photo[-1]
             image_data = await download_telegram_file(photo.file_id, context)
+            
+            # Increment media usage count if we successfully got the image
+            if image_data:
+                usage_limits.increment_media_usage()
         
-        # Handle animations/GIFs
+        # Handle animations/GIFs - add usage limits
         elif update.message.animation:
             logger.info("Message contains animation/GIF")
+            
+            # Check if we've reached daily media processing limit
+            if not usage_limits.can_process_media():
+                await update.message.reply_text(
+                    "متأسفانه به محدودیت روزانه پردازش تصاویر و ویدیوها رسیده‌ایم. لطفا فردا دوباره امتحان کنید. 🎬"
+                )
+                return
+                
             has_media = True
             media_description = "[GIF/انیمیشن] "
             # Try to get a thumbnail or the animation itself
@@ -469,6 +490,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 image_data = await download_telegram_file(update.message.animation.thumbnail.file_id, context)
             else:
                 image_data = await download_telegram_file(update.message.animation.file_id, context)
+                
+            # Increment media usage count if we successfully got the image
+            if image_data:
+                usage_limits.increment_media_usage()
         
         # Combine context with the query and media description
         if query:
