@@ -785,19 +785,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         
         # Try to send with Markdown formatting, but fall back to plain text if there's an error
+        message_sent = False
         try:
             # Skip escape for messages that contain code blocks or complex formatting
             if "```" in ai_response or "~~~" in ai_response:
                 # Try sending with regular Markdown first
                 await update.message.reply_text(ai_response, parse_mode=ParseMode.MARKDOWN)
+                message_sent = True
             else:
                 # Escape for MarkdownV2 and send
                 escaped_response = escape_markdown_v2(ai_response)
                 await update.message.reply_text(escaped_response, parse_mode=ParseMode.MARKDOWN_V2)
+                message_sent = True
         except Exception as e:
             logger.error(f"Error sending formatted message: {e}")
-            # Fall back to plain text with no formatting
-        await update.message.reply_text(ai_response)
+            # Fall back to plain text with no formatting ONLY if the formatted message failed
+            if not message_sent:
+                await update.message.reply_text(ai_response)
 
 async def dollar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send current USD/IRR exchange rate when the command /dollar is issued."""
