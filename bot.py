@@ -18,6 +18,7 @@ import web_extractor
 import usage_limits
 import memory
 import exchange_rates
+import image_generator
 import re
 
 # Load environment variables from .env file
@@ -63,7 +64,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• تشخیص و پاسخ به درخواست‌های اخبار با کلیدواژه‌هایی مثل \"اخبار\" یا \"خبر\"\n"
         "• استخراج محتوا از لینک‌های موجود در پیام\n"
         "• نمایش قیمت ارز، طلا، سکه و ارزهای دیجیتال\n"
-        "• درک و استفاده از تصاویر در گفتگو\n\n"
+        "• درک و استفاده از تصاویر در گفتگو\n"
+        "• ساخت تصویر با دستوراتی مثل \"تصویر بساز از...\" (محدود به ۳ بار در روز)\n\n"
         "*برای استفاده از من:*\n"
         "• در چت خصوصی: پیام خود را مستقیماً بنویسید\n"
         "• در گروه‌ها: من را با @firtigh یا @@firtigh تگ کنید\n\n"
@@ -824,6 +826,59 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
             # Send the formatted response
             await processing_message.edit_text(formatted_response)
+            return
+        
+        # Check if this is an image generation request
+        elif image_generator.is_image_generation_request(query):
+            # Check if the user has reached the daily limit
+            if not usage_limits.can_generate_image():
+                await update.message.reply_text(
+                    "متأسفانه به محدودیت روزانه ساخت تصویر رسیده‌اید (۳ بار در روز). لطفاً فردا دوباره امتحان کنید. 🖼️"
+                )
+                return
+                
+            # Extract the image prompt
+            image_prompt = image_generator.extract_image_prompt(query)
+            
+            if not image_prompt:
+                await update.message.reply_text(
+                    "لطفاً توضیح دهید چه تصویری می‌خواهید بسازم. مثال: '@firtigh تصویر بساز از یک گربه ایرانی کنار حافظیه شیراز'"
+                )
+                return
+                
+            # Show a typing indicator while generating the image
+            await update.message.reply_chat_action("typing")
+            
+            # Show that we're generating the image
+            processing_message = await update.message.reply_text("در حال ساخت تصویر... ⌛")
+            
+            # Generate the image
+            image_url, error = await image_generator.generate_image(image_prompt)
+            
+            if error or not image_url:
+                await processing_message.edit_text(f"❌ {error if error else 'خطا در ساخت تصویر.'}")
+                return
+                
+            try:
+                # Increment usage counter
+                usage_count = usage_limits.increment_image_gen_usage()
+                remaining = 3 - usage_count  # 3 is the daily limit
+                
+                # Download the image
+                response = requests.get(image_url)
+                
+                # Send the image with the prompt as caption
+                await update.message.reply_photo(
+                    photo=BytesIO(response.content),
+                    caption=f"🖼️ تصویر ساخته شده بر اساس درخواست شما:\n\n«{image_prompt}»\n\n{remaining} بار دیگر می‌توانید امروز تصویر بسازید."
+                )
+                
+                # Delete the processing message
+                await processing_message.delete()
+            except Exception as e:
+                logger.error(f"Error sending generated image: {e}")
+                await processing_message.edit_text(f"❌ خطا در ارسال تصویر: {str(e)}")
+            
             return
         
         # Initialize variables for web search and link content

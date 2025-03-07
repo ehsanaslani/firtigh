@@ -3,6 +3,7 @@ import sys
 import pytest
 import asyncio
 from unittest.mock import AsyncMock, patch, MagicMock
+from io import BytesIO
 
 # Add the parent directory to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -276,6 +277,94 @@ def test_code_block_formatting(mock_generate_ai, mock_update, mock_context):
     else:
         # If there's no parse_mode, the test passes as we're falling back to plain text
         pass
+
+@pytest.mark.asyncio
+@patch('image_generator.is_image_generation_request')
+@patch('image_generator.extract_image_prompt')
+@patch('image_generator.generate_image')
+@patch('usage_limits.can_generate_image')
+@patch('usage_limits.increment_image_gen_usage')
+@patch('requests.get')
+async def test_handle_image_generation_request(mock_requests_get, mock_increment_usage, mock_can_generate,
+                                      mock_generate_image, mock_extract_prompt, mock_is_image_request,
+                                      mock_update, mock_context):
+    """Test handling of image generation requests."""
+    # Configure the mock responses
+    mock_is_image_request.return_value = True
+    mock_extract_prompt.return_value = "a cat sitting on a chair"
+    mock_can_generate.return_value = True
+    mock_increment_usage.return_value = 1  # First usage of the day
+
+    async def mock_generate(*args, **kwargs):
+        return "https://example.com/image.jpg", None
+
+    mock_generate_image.side_effect = mock_generate
+
+    # Mock the requests.get response for image download
+    mock_response = MagicMock()
+    mock_response.content = b"image_data"
+    mock_requests_get.return_value = mock_response
+
+    # Set up the message text
+    mock_update.message.text = "@firtigh تصویر بساز از گربه روی صندلی"
+    
+    # Set up the message mock with AsyncMock for async methods
+    mock_processing_message = AsyncMock()
+    mock_update.message.reply_text = AsyncMock(return_value=mock_processing_message)
+    mock_update.message.reply_chat_action = AsyncMock()
+    mock_update.message.reply_photo = AsyncMock()
+    
+    # Set up the context's bot username
+    mock_context.bot.username = "firtigh"
+
+    # Call the handler
+    await bot.handle_message(mock_update, mock_context)
+
+    # Verify that the image was generated and sent
+    mock_is_image_request.assert_called_once()
+    mock_extract_prompt.assert_called_once()
+    mock_can_generate.assert_called_once()
+    mock_generate_image.assert_called_once_with("a cat sitting on a chair")
+    mock_increment_usage.assert_called_once()
+    mock_requests_get.assert_called_once_with("https://example.com/image.jpg")
+    
+    # Verify that the image was sent with the correct caption
+    mock_update.message.reply_photo.assert_called_once()
+    call_args = mock_update.message.reply_photo.call_args
+    assert isinstance(call_args[1]['photo'], BytesIO)
+    assert "تصویر ساخته شده بر اساس درخواست شما" in call_args[1]['caption']
+    assert "a cat sitting on a chair" in call_args[1]['caption']
+    assert "2 بار دیگر" in call_args[1]['caption']  # 3 - 1 = 2 remaining
+    
+    # Verify that the processing message was deleted
+    mock_processing_message.delete.assert_called_once()
+
+@pytest.mark.asyncio
+@patch('image_generator.is_image_generation_request')
+@patch('usage_limits.can_generate_image')
+async def test_handle_image_generation_limit_reached(mock_can_generate, mock_is_image_request, mock_update, mock_context):
+    """Test handling of image generation requests when limit is reached."""
+    # Configure the mock responses
+    mock_is_image_request.return_value = True
+    mock_can_generate.return_value = False  # Limit reached
+    
+    # Set up the message text
+    mock_update.message.text = "@firtigh تصویر بساز از گربه روی صندلی"
+    
+    # Set up the message mock with AsyncMock for async methods
+    mock_update.message.reply_text = AsyncMock()
+    
+    # Set up the context's bot username
+    mock_context.bot.username = "firtigh"
+    
+    # Call the handler
+    await bot.handle_message(mock_update, mock_context)
+    
+    # Verify that the limit message was sent
+    mock_update.message.reply_text.assert_called_once()
+    call_args = mock_update.message.reply_text.call_args[0][0]
+    assert "محدودیت روزانه" in call_args
+    assert "۳ بار" in call_args
 
 if __name__ == '__main__':
     pytest.main() 

@@ -9,9 +9,9 @@ from typing import Dict, Any, Optional, Tuple, List
 logger = logging.getLogger(__name__)
 
 # API URLs
-EXCHANGE_RATE_API_URL = "https://api.alanchand.com/v1/rates"
-GOLD_PRICE_API_URL = "https://api.alanchand.com/v1/golds"
-CRYPTO_PRICE_API_URL = "https://api.alanchand.com/v1/cryptos"
+EXCHANGE_RATE_API_URL = "https://alanchand.com/api/price-free?type=currencies"
+GOLD_PRICE_API_URL = "https://alanchand.com/api/price-free?type=gold"
+CRYPTO_PRICE_API_URL = "https://alanchand.com/api/price-free?type=crypto"
 
 def format_price(price: Any) -> str:
     """
@@ -61,13 +61,27 @@ async def get_currency_rate(currency_slug: str = "usd") -> Tuple[Optional[Dict[s
                     logger.error(error_msg)
                     return None, error_msg
                 
-                data = await response.json()
+                api_data = await response.json()
                 
-                # Validate response format
-                if not isinstance(data, dict) or 'data' not in data:
-                    error_msg = "Unexpected response format from exchange rate API"
-                    logger.error(error_msg)
-                    return None, error_msg
+                # Convert to our internal format
+                data = {
+                    'data': [],
+                    'updated_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+                
+                # Process each currency item
+                for item in api_data:
+                    slug = item.get('slug', '')
+                    data['data'].append({
+                        'slug': slug,
+                        'name': item.get('name', slug.upper()),
+                        'buy': item.get('buy', 0),
+                        'sell': item.get('sell', 0),
+                        'high': item.get('high', 0),
+                        'low': item.get('low', 0),
+                        'change': item.get('price_change', 0),
+                        'open': item.get('open', 0)
+                    })
                 
                 return data, None
                 
@@ -414,11 +428,21 @@ async def fetch_gold_prices() -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
                 if response.status != 200:
                     return None, f"API returned status code {response.status}"
                 
-                data = await response.json()
+                api_data = await response.json()
                 
-                # Check if the response has the expected structure
-                if 'data' not in data:
-                    return None, "Unexpected API response format, missing 'data' field"
+                # Convert to our internal format
+                data = {
+                    'data': [],
+                    'updated_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+                
+                # Process each gold item
+                for item in api_data:
+                    data['data'].append({
+                        'name': item.get('name', 'نامشخص'),
+                        'price': item.get('sell', 0),  # Use 'sell' as the price
+                        'change': item.get('price_change', 0)
+                    })
                 
                 return data, None
     except aiohttp.ClientError as e:
@@ -512,11 +536,41 @@ async def fetch_crypto_prices() -> Tuple[Optional[Dict[str, Any]], Optional[str]
                 if response.status != 200:
                     return None, f"API returned status code {response.status}"
                 
-                data = await response.json()
+                api_data = await response.json()
                 
-                # Check if the response has the expected structure
-                if 'data' not in data:
-                    return None, "Unexpected API response format, missing 'data' field"
+                # Convert to our internal format
+                data = {
+                    'data': [],
+                    'updated_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+                
+                # Process each crypto item
+                for item in api_data:
+                    # Extract symbol from the name if available
+                    name = item.get('name', '')
+                    symbol = name.split('/')  # Try to extract symbol from name like "Bitcoin/BTC"
+                    if len(symbol) > 1:
+                        symbol = symbol[-1].strip()
+                    else:
+                        symbol = name[:3].upper()  # Use first 3 chars as symbol if not available
+                    
+                    # Calculate 24h change percentage
+                    current_price = item.get('sell', 0)
+                    open_price = item.get('open', 0)
+                    change_24h = 0
+                    
+                    if open_price and current_price:
+                        try:
+                            change_24h = ((current_price - open_price) / open_price) * 100
+                        except (ZeroDivisionError, TypeError):
+                            change_24h = 0
+                    
+                    data['data'].append({
+                        'name': name,
+                        'symbol': symbol,
+                        'price': current_price,
+                        'change_24h': round(change_24h, 2)
+                    })
                 
                 return data, None
     except aiohttp.ClientError as e:

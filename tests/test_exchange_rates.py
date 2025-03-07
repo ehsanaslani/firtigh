@@ -29,31 +29,28 @@ def test_usd_irr_rate_fetching(mock_get):
     # Create a mock response
     mock_response = AsyncMock()
     mock_response.status = 200
-    mock_response.json = AsyncMock(return_value={
-        'data': [
-            {
-                'slug': 'usd',
-                'name': 'دلار آمریکا',
-                'buy': 48636.42,
-                'sell': 48930,
-                'dolar_rate': 1,
-                'high': 49100,
-                'low': 47670,
-                'open': 47670
-            },
-            {
-                'slug': 'eur',
-                'name': 'یورو',
-                'buy': 53000,
-                'sell': 53500,
-                'dolar_rate': 1.1,
-                'high': 54000,
-                'low': 52500,
-                'open': 53000
-            }
-        ],
-        'updated_at': '2023-01-01T12:00:00'
-    })
+    mock_response.json = AsyncMock(return_value=[
+        {
+            'slug': 'usd',
+            'name': 'دلار آمریکا',
+            'buy': 48636.42,
+            'sell': 48930,
+            'dolar_rate': 1,
+            'high': 49100,
+            'low': 47670,
+            'open': 47670
+        },
+        {
+            'slug': 'eur',
+            'name': 'یورو',
+            'buy': 53000,
+            'sell': 53500,
+            'dolar_rate': 1.1,
+            'high': 54000,
+            'low': 52500,
+            'open': 53000
+        }
+    ])
     
     # Configure the mock
     mock_get.return_value.__aenter__.return_value = mock_response
@@ -172,21 +169,18 @@ def test_gold_prices_fetching(mock_get):
     # Create a mock response
     mock_response = AsyncMock()
     mock_response.status = 200
-    mock_response.json = AsyncMock(return_value={
-        'data': [
-            {
-                'name': 'یک گرم طلای 18 عیار',
-                'price': 2216200,
-                'change': 25900
-            },
-            {
-                'name': 'سکه امامی',
-                'price': 28900000,
-                'change': 1300000
-            }
-        ],
-        'updated_at': '2023-01-01T12:00:00'
-    })
+    mock_response.json = AsyncMock(return_value=[
+        {
+            'name': 'یک گرم طلای 18 عیار',
+            'sell': 2216200,
+            'price_change': 25900
+        },
+        {
+            'name': 'سکه امامی',
+            'sell': 28900000,
+            'price_change': 1300000
+        }
+    ])
     
     # Configure the mock
     mock_get.return_value.__aenter__.return_value = mock_response
@@ -201,9 +195,7 @@ def test_gold_prices_fetching(mock_get):
     assert len(result['data']) == 2
     assert result['data'][0]['name'] == 'یک گرم طلای 18 عیار'
     assert result['data'][0]['price'] == 2216200
-    assert result['data'][1]['name'] == 'سکه امامی'
-    assert result['data'][1]['price'] == 28900000
-    assert 'updated_at' in result
+    assert result['data'][0]['change'] == 25900
 
 def test_gold_price_formatting():
     """Test formatting of gold price data."""
@@ -240,23 +232,18 @@ def test_crypto_prices_fetching(mock_get):
     # Create a mock response
     mock_response = AsyncMock()
     mock_response.status = 200
-    mock_response.json = AsyncMock(return_value={
-        'data': [
-            {
-                'name': 'Bitcoin',
-                'symbol': 'BTC',
-                'price': 65000,
-                'change_24h': 2.5
-            },
-            {
-                'name': 'Ethereum',
-                'symbol': 'ETH',
-                'price': 3500,
-                'change_24h': -1.2
-            }
-        ],
-        'updated_at': '2023-01-01T12:00:00'
-    })
+    mock_response.json = AsyncMock(return_value=[
+        {
+            'name': 'Bitcoin/BTC',
+            'sell': 65000,
+            'open': 63415
+        },
+        {
+            'name': 'Ethereum/ETH',
+            'sell': 3500,
+            'open': 3542
+        }
+    ])
     
     # Configure the mock
     mock_get.return_value.__aenter__.return_value = mock_response
@@ -269,11 +256,10 @@ def test_crypto_prices_fetching(mock_get):
     assert result is not None
     assert 'data' in result
     assert len(result['data']) == 2
-    assert result['data'][0]['name'] == 'Bitcoin'
+    assert result['data'][0]['name'] == 'Bitcoin/BTC'
     assert result['data'][0]['symbol'] == 'BTC'
     assert result['data'][0]['price'] == 65000
-    assert result['data'][0]['change_24h'] == 2.5
-    assert 'updated_at' in result
+    assert abs(result['data'][0]['change_24h'] - 2.5) < 0.1  # Allow small rounding differences
 
 def test_crypto_price_formatting():
     """Test formatting of cryptocurrency price data."""

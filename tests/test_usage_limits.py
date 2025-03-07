@@ -48,24 +48,27 @@ class TestUsageLimits(unittest.TestCase):
         self.assertIn("date", data)
         self.assertIn("search_count", data)
         self.assertIn("media_count", data)
+        self.assertIn("image_gen_count", data)
         self.assertEqual(data["search_count"], 0)
         self.assertEqual(data["media_count"], 0)
+        self.assertEqual(data["image_gen_count"], 0)
     
     def test_reset_usage_if_new_day(self):
         """Test that usage counters are reset on a new day."""
-        # Create a file with a date in the past
+        # Set up a file with yesterday's date
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
         with open(usage_limits.USAGE_FILE, "w") as f:
             json.dump({
                 "date": yesterday,
-                "search_count": 42,
-                "media_count": 17
+                "search_count": 10,
+                "media_count": 5,
+                "image_gen_count": 3
             }, f)
         
-        # Reset should detect the old date and reset counters
+        # Call the reset function
         usage_limits._reset_usage_if_new_day()
         
-        # Check that counters were reset
+        # Check that the file was updated with today's date and reset counters
         with open(usage_limits.USAGE_FILE, "r") as f:
             data = json.load(f)
         
@@ -73,6 +76,7 @@ class TestUsageLimits(unittest.TestCase):
         self.assertEqual(data["date"], today)
         self.assertEqual(data["search_count"], 0)
         self.assertEqual(data["media_count"], 0)
+        self.assertEqual(data["image_gen_count"], 0)
     
     def test_update_usage_count(self):
         """Test updating usage counts."""
@@ -155,23 +159,53 @@ class TestUsageLimits(unittest.TestCase):
     
     def test_get_remaining_limits(self):
         """Test getting remaining limits."""
-        # Initialize the file
-        usage_limits._initialize_usage_file()
-        
-        # Set some usage
-        search_limit = usage_limits.get_daily_limits()["search"]
-        media_limit = usage_limits.get_daily_limits()["media"]
+        # Create a new usage file with some usage
         with open(usage_limits.USAGE_FILE, "w") as f:
             json.dump({
                 "date": datetime.now().strftime("%Y-%m-%d"),
                 "search_count": 10,
-                "media_count": 5
+                "media_count": 5,
+                "image_gen_count": 2
             }, f)
         
-        # Check remaining limits
-        remaining = usage_limits.get_remaining_limits()
-        self.assertEqual(remaining["search"], search_limit - 10)
-        self.assertEqual(remaining["media"], media_limit - 5)
+        # Set specific limits for testing
+        with patch.dict('os.environ', {
+            'DAILY_SEARCH_LIMIT': '50',
+            'DAILY_MEDIA_LIMIT': '20',
+            'DAILY_IMAGE_GEN_LIMIT': '3'
+        }):
+            limits = usage_limits.get_remaining_limits()
+            
+            # Check remaining limits
+            self.assertEqual(limits["search"], 40)  # 50 - 10
+            self.assertEqual(limits["media"], 15)   # 20 - 5
+            self.assertEqual(limits["image_gen"], 1) # 3 - 2
+
+    def test_can_generate_image(self):
+        """Test the image generation limit checking."""
+        # Create a new usage file with no previous usage
+        usage_limits._initialize_usage_file()
+        
+        # Set the image generation limit to 3
+        with patch.dict('os.environ', {'DAILY_IMAGE_GEN_LIMIT': '3'}):
+            # Should be able to generate images when under the limit
+            self.assertTrue(usage_limits.can_generate_image())
+            
+            # Simulate generating 1 image
+            usage_limits.increment_image_gen_usage()
+            self.assertTrue(usage_limits.can_generate_image())
+            
+            # Simulate generating 2 more images (total 3)
+            usage_limits.increment_image_gen_usage()
+            usage_limits.increment_image_gen_usage()
+            
+            # Should now be at the limit (3 of 3 used)
+            self.assertFalse(usage_limits.can_generate_image())
+            
+            # Check the current count
+            with open(usage_limits.USAGE_FILE, "r") as f:
+                data = json.load(f)
+            self.assertEqual(data["image_gen_count"], 3)
 
 if __name__ == "__main__":
     unittest.main() 

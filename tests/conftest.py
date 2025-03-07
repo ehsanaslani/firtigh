@@ -4,15 +4,25 @@ Pytest configuration file with common fixtures.
 import pytest
 import os
 import sys
+import asyncio
 from unittest.mock import MagicMock, AsyncMock
 from telegram import Update, User, Message, Chat
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, CallbackContext
 
 # Add the parent directory to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import the bot module
 import bot
+
+# Mark all tests as asyncio, so we can use async functions directly
+pytest_plugins = ["pytest_asyncio"]
+
+# Apply 'asyncio' mark to all tests by default
+def pytest_collection_modifyitems(items):
+    for item in items:
+        if asyncio.iscoroutinefunction(item.function) and 'asyncio' not in item.keywords:
+            item.add_marker(pytest.mark.asyncio)
 
 @pytest.fixture
 def mock_update():
