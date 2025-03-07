@@ -118,6 +118,10 @@ def can_use_search() -> bool:
         # Default to allowing search if there's an error
         return True
 
+def can_perform_search() -> bool:
+    """Alias for can_use_search() to maintain backward compatibility."""
+    return can_use_search()
+
 def can_process_media() -> bool:
     """Check if the media processing limit has not been reached for today."""
     try:

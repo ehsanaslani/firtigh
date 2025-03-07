@@ -163,6 +163,75 @@ worker: python bot.py
 heroku ps:scale worker=1
 ```
 
+## Monitoring and Logs
+
+### Viewing Heroku Logs
+To monitor your bot and troubleshoot issues, you can view the application logs from Heroku. Two scripts are provided for easy access to logs:
+
+#### Using PowerShell Script (Windows)
+A PowerShell script is available for Windows users:
+
+```powershell
+# View live logs (streaming)
+.\view_logs.ps1 -Tail
+
+# View most recent logs (default: 100 lines)
+.\view_logs.ps1
+
+# View specific number of lines
+.\view_logs.ps1 -Lines 200
+
+# Filter logs by source (application only)
+.\view_logs.ps1 -Source app
+
+# Display help
+.\view_logs.ps1 -Help
+```
+
+#### Using Bash Script (Linux/Mac)
+For Linux and Mac users, use the Bash script:
+
+```bash
+# Make the script executable (first time only)
+chmod +x view_logs.sh
+
+# View live logs (streaming)
+./view_logs.sh --tail
+
+# View most recent logs (default: 100 lines)
+./view_logs.sh
+
+# View specific number of lines
+./view_logs.sh --lines 200
+
+# Filter logs by source (application only)
+./view_logs.sh --source app
+
+# Display help
+./view_logs.sh --help
+```
+
+#### Direct Heroku CLI Commands
+You can also use the Heroku CLI directly:
+
+```bash
+# Stream live logs
+heroku logs --tail --app your-app-name
+
+# View most recent logs
+heroku logs --app your-app-name
+
+# View specific number of lines
+heroku logs -n 200 --app your-app-name
+```
+
+### Log Interpretation
+Important log entries to look for:
+- Bot startup confirmation
+- Command processing
+- Error messages
+- Memory and database operations
+
 ## Adding the Bot to a Group
 
 1. Open Telegram and find your bot by username
