@@ -234,8 +234,8 @@ class TestBot(unittest.TestCase):
         system_content = call_kwargs["messages"][0]["content"]
         self.assertIn(bot.BOT_NAME, system_content)
         self.assertIn(bot.BOT_FULL_NAME, system_content)
-        self.assertIn("دوستانه", system_content)  # Friendly
-        self.assertIn("سرگرم‌کننده", system_content)  # Fun
+        self.assertIn("رک", system_content)  # Direct/blunt
+        self.assertIn("مستقیم", system_content)  # Direct
         self.assertIn("رکیک", system_content)  # Profanity/no filter
     
     @patch('openai.ChatCompletion.create')

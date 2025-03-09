@@ -12,8 +12,7 @@ from io import BytesIO
 from dotenv import load_dotenv
 from datetime import datetime, timezone, timedelta
 import openai
-from openai import OpenAI
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, ParseMode
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.constants import ParseMode
 from telegram.ext import (
     ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, 

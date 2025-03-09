@@ -1,17 +1,22 @@
+import os
+import re
+import json
 import logging
 import aiohttp
 from bs4 import BeautifulSoup
 from datetime import datetime
-import re
-import json
 from typing import Dict, Any, Optional, Tuple, List
 
+# Import config for settings
+import config
+
+# Configure logging
 logger = logging.getLogger(__name__)
 
 # API URLs
-EXCHANGE_RATE_API_URL = "https://alanchand.com/api/price-free?type=currencies"
-GOLD_PRICE_API_URL = "https://alanchand.com/api/price-free?type=gold"
-CRYPTO_PRICE_API_URL = "https://alanchand.com/api/price-free?type=crypto"
+EXCHANGE_RATE_API_URL = "https://api.alanchand.com/currencies"
+GOLD_PRICE_API_URL = "https://api.alanchand.com/golds"
+CRYPTO_PRICE_API_URL = "https://api.alanchand.com/cryptos"
 
 def format_price(price: Any) -> str:
     """
@@ -348,14 +353,14 @@ def format_exchange_rate_result(result: dict) -> str:
     change = result.get("change_percent", "N/A")
     if change and "%" in change:
         try:
-        change_value = float(change.replace("%", "").strip())
-        if change_value > 0:
-            change_icon = "🟢"
-        elif change_value < 0:
-            change_icon = "🔴"
-        else:
-            change_icon = "⚪"
-        change_formatted = f"{change_icon} {change}"
+            change_value = float(change.replace("%", "").strip())
+            if change_value > 0:
+                change_icon = "🟢"
+            elif change_value < 0:
+                change_icon = "🔴"
+            else:
+                change_icon = "⚪"
+            change_formatted = f"{change_icon} {change}"
         except (ValueError, TypeError):
             change_formatted = change
     else:
@@ -394,8 +399,8 @@ async def get_usd_toman_rate() -> dict:
     if not rial_result.get("success", False):
         return rial_result
     
-        # Convert Rial to Toman
-        try:
+    # Convert Rial to Toman
+    try:
         # Convert all the rates to Toman
         for key in ["current_rate", "buy_rate", "sell_rate", "high", "low"]:
             if rial_result.get(key):
