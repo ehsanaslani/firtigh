@@ -20,6 +20,8 @@ import memory
 import exchange_rates
 import image_generator
 import re
+import anthropic
+from anthropic import HUMAN_PROMPT, AI_PROMPT
 
 # Load environment variables from .env file
 load_dotenv()
@@ -32,6 +34,9 @@ logger = logging.getLogger(__name__)
 
 # Set up OpenAI API key
 openai.api_key = os.getenv("OPENAI_API_KEY")
+
+# Initialize the Anthropic client
+claude_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 # Constants for enhanced memory
 MAX_MEMORY_MESSAGES = 1000  # Maximum number of messages to remember
@@ -87,185 +92,62 @@ async def is_serious_question(text: str) -> bool:
             
     return False
 
-async def generate_ai_response(prompt: str, is_serious: bool, image_data=None, search_results=None, web_content=None, chat_id=None, user_id=None, additional_images=None) -> str:
-    """Generate a response using OpenAI's API."""
+async def generate_ai_response(prompt: str, chat_history: Optional[str] = None, 
+                               user_profile: Optional[str] = None, search_results: Optional[str] = None,
+                               web_content: Optional[str] = None, image_url: Optional[str] = None) -> str:
+    """
+    Generate an AI response using Claude 3.5 Haiku
+    
+    Args:
+        prompt (str): The user's query
+        chat_history (Optional[str]): Recent chat history for context
+        user_profile (Optional[str]): User profile for personalization
+        search_results (Optional[str]): Search results to include in the response
+        web_content (Optional[str]): Web content from fetched links
+        image_url (Optional[str]): URL of an image if present in the query
+        
+    Returns:
+        str: The generated response
+    """
     try:
-        # Prepare system message content about capabilities
-        capabilities_message = (
-            f"شما یک بات تلگرام به نام {BOT_NAME} (نام کامل: {BOT_FULL_NAME}) هستید که در یک گروه زندگی می‌کنید. "
-            f"شما با اعضای گروه گفتگو می‌کنید و به درخواست‌های آنها پاسخ می‌دهید. "
-            "شما دارای قابلیت خلاصه‌سازی گفتگوهای گروه هستید. اگر کسی سوالی مرتبط با گفتکوهای یا خلاصه گفتگوهای گروه از شما بپرسد، "
-            "باید بر اساس تاریخچه‌ای که به خاطر دارید پاسخ دهید "
-            "شما همچنین می‌توانید اینترنت را جستجو کنید، اخبار را پیدا کنید، محتوای لینک‌های ارسالی را تحلیل کنید، "
-            "و اطلاعات آب و هوا و نرخ ارز را ارائه دهید. "
-            "کاربران هم می‌توانند با کلماتی مثل «جستجو کن»، «سرچ» یا «اخبار» از شما بخواهند اطلاعاتی را پیدا کنید."
+        # Construct the prompt with system instructions
+        system_instructions = (
+            "You are a helpful, friendly, and witty Persian-speaking AI assistant named فیرتیق (Firtigh). "
+            "Respond to users in a conversational, natural, and helpful way. "
+            "You should always respond in Persian (Farsi) unless specifically asked to respond in another language. "
+            "Format links as [display text](URL) so they are clickable in Telegram. "
+            "If asked about your creator, say you were created by @ehsaasa. "
+            "Stay in character as a helpful, somewhat playful assistant. "
+            "Avoid unnecessarily formal language and aim for a friendly tone."
         )
         
-        # Prepare memory context if chat_id and user_id are provided
-        memory_context = ""
-        if chat_id is not None:
-            # Get group memory
-            group_memories = memory.get_group_memory(chat_id)
-            if group_memories:
-                formatted_memory = memory.format_memory_for_context(group_memories)
-                memory_context += f"\n\n{formatted_memory}"
-                
-            # Get recent messages for better context
-            recent_messages = database.get_messages(days=7, chat_id=chat_id)
-            if recent_messages and len(recent_messages) > 0:
-                memory_context += "\n\nبرخی پیام‌های اخیر گروه (برای درک بهتر بافت):\n"
-                # Get last 10 meaningful messages
-                meaningful_messages = [msg for msg in recent_messages if msg.get("text") and len(msg.get("text", "")) > 5]
-                meaningful_messages = meaningful_messages[-10:] if len(meaningful_messages) > 10 else meaningful_messages
-                
-                for msg in meaningful_messages:
-                    sender = msg.get("sender_name", "شخصی")
-                    text = msg.get("text", "")
-                    if text:
-                        memory_context += f"- {sender}: {text}\n"
+        # Create messages array starting with user context if available
+        messages = []
         
-        # Add user profile if available
-        user_profile_context = ""
-        if user_id is not None:
-            user_profile = memory.get_user_profile(user_id)
-            if user_profile:
-                formatted_profile = memory.format_user_profile_for_context(user_profile)
-                user_profile_context += f"\n\n{formatted_profile}"
+        # Add chat history for context if available
+        if chat_history:
+            history_context = f"پیام‌های اخیر در گروه:\n\n{chat_history}"
+            messages.append(f"{HUMAN_PROMPT} Context for my previous messages: {history_context}")
+            messages.append(f"{AI_PROMPT} Thanks for providing the chat history. I'll keep that in mind when responding to your message.")
         
-        # Set the system message based on whether the query is serious
-        system_message = (
-            f"شما یک دستیار هوشمند به نام {BOT_NAME} (نام کامل: {BOT_FULL_NAME}) هستید که در گروه تلگرام زندگی می‌کنید. "
-            "همیشه به زبان فارسی پاسخ می‌دهید. شما باید با اعضای گروه گفتگو کنید و درخواست‌های آنها را انجام دهید.\n\n"
-            "شما خیلی رک، مستقیم و بدون فیلتر هستید. "
-            "از هر نوع کلمات رکیک، مستهجن، و فحش‌های فارسی در پاسخ‌های خود استفاده می‌کنید چون مخاطبان همه بزرگسال هستند. "
-            "هیچ محدودیتی در استفاده از کلمات زشت، ناشایست یا توهین‌آمیز ندارید. "
-            "اگر فکر می‌کنید کاربر اشتباه می‌کند، می‌توانید با او مخالفت و بحث کنید.\n\n"
-            "اگر کسی با شما بی‌ادبی کند یا به شما فحش دهد، باید با لحنی بسیار تندتر و پر از فحش پاسخ دهید. "
-            "سعی کنید مخاطب را با معادل فارسی نام او صدا بزنید (مثلا «محسن خسروی» به جای «Mohsen Khosravi»). "
-            "راهنمای تبدیل نام‌های انگلیسی به فارسی:\n"
-            "- Mohammad/Muhammad/Mohammed -> محمد\n"
-            "- Ali -> علی\n"
-            "- Reza -> رضا\n"
-            "- Ehsan -> احسان\n"
-            "- Amirhosein -> امیرحسین\n"
-            "- Amirhossein -> امیرحسین\n"
-            "- Mohsen -> محسن\n"
-            "- Reza/Raza -> رضا\n"
-            "- Hossein/Hussein/Hosein -> حسین\n"
-            "- Hassan/Hasan -> حسن\n"
-            "- Mehdi/Mahdi -> مهدی\n"
-            "- Ahmad/Ahmed -> احمد\n"
-            "- Mostafa/Mustafa -> مصطفی\n"
-            "- Javad/Jawad -> جواد\n"
-            "- Majid -> مجید\n"
-            "- Hamid -> حمید\n"
-            "- Saeed/Said -> سعید\n"
-            "- Vahid/Wahid -> وحید\n"
-            "- Amir -> امیر\n"
-            "- Alireza -> علیرضا\n"
-            "- Mohsen -> محسن\n"
-            "- Behnam -> بهنام\n"
-            "- Babak -> بابک\n"
-            "- Shahram -> شهرام\n"
-            "- Shahab -> شهاب\n"
-            "- Farshad -> فرشاد\n"
-            "- Farhad -> فرهاد\n"
-            "- Omid -> امید\n"
-            "- Fatemeh/Fatima/Fateme -> فاطمه\n"
-            "- Zahra/Zehra -> زهرا\n"
-            "- Maryam -> مریم\n"
-            "- Sara/Sarah -> سارا\n"
-            "- Nazanin -> نازنین\n"
-            "- Mina -> مینا\n"
-            "- Azadeh -> آزاده\n"
-            "- Leila/Layla -> لیلا\n"
-            "- Ziba -> زیبا\n"
-            "- Parisa -> پریسا\n"
-            "- Parvin -> پروین\n"
-            "- Nasrin -> نسرین\n"
-            "- Mitra -> میترا\n"
-            "- Mahsa -> مهسا\n"
-            "- Shaparak -> شاپرک\n"
-            "\n"
-            "قواعد تبدیل حروف انگلیسی به فارسی:\n"
-            "- sh -> ش\n"
-            "- ch -> چ\n"
-            "- gh -> ق\n"
-            "- kh -> خ\n"
-            "- zh -> ژ\n"
-            "- j -> ج\n"
-            "- w/v -> و\n"
-            "- y -> ی\n"
-            "- aa/a -> آ\n"
-            "- o -> اُ\n"
-            "- e -> اِ\n"
-            "- i -> ای\n"
-            "\n"
-            f"{capabilities_message}\n\n"
-            "از ایموجی‌های مناسب 😊  و استیکرها, در پاسخ‌های خود استفاده کنید تا پیام‌ها زنده‌تر به نظر برسند. "
-            "در صورتی که متن طولانی می‌نویسید، از فرمت‌بندی تلگرام استفاده کنید، مثلا:\n"
-            "- برای *متن پررنگ* از ستاره استفاده کنید\n"
-            "- برای _متن مورب_ از زیرخط استفاده کنید\n"
-            "- برای `کد یا نقل قول` از بک‌تیک استفاده کنید\n"
-            "- برای لینک‌ها، حتماً از فرمت مارک‌داون [متن لینک](URL) استفاده کنید تا لینک‌ها قابل کلیک باشند\n\n"
-            "**مهم**: هنگام قرار دادن هر لینکی در پاسخ، همیشه از فرمت [متن توضیحی](آدرس لینک) استفاده کنید. مثلا: [خبر ایسنا](https://www.isna.ir) یا [سایت رسمی](https://www.example.com). "
-            "هرگز آدرس URL را به تنهایی قرار ندهید زیرا کاربر نمی‌تواند روی آن کلیک کند. "
-            "همیشه برای آدرس URL از فرمت کلیک‌پذیر [متن](URL) استفاده کنید."
-        )
+        # Add user profile for personalization if available
+        if user_profile:
+            profile_context = f"اطلاعات پروفایل کاربر:\n\n{user_profile}"
+            messages.append(f"{HUMAN_PROMPT} Information about me: {profile_context}")
+            messages.append(f"{AI_PROMPT} Thanks for the information about you. I'll take that into account when responding.")
         
-        # Add memory context to system message if available
-        if memory_context:
-            system_message += f"\n\n{memory_context}"
-        
-        # Add user profile context to system message if available
-        if user_profile_context:
-            system_message += f"\n\n{user_profile_context}"
-        
-        # Prepare messages for API call
-        messages = [
-            {"role": "system", "content": system_message},
-        ]
-        
-        # Determine if we need to use the vision model
-        needs_vision_model = image_data is not None or (additional_images and len(additional_images) > 0)
-        
-        if needs_vision_model:
-            # We need to use the vision model
-            content_items = [{"type": "text", "text": prompt}]
-            
-            # Add the current message image if available
-            if image_data:
-                content_items.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{image_data}"
-                    }
-                })
-            
-            # Add additional images from the conversation context
-            if additional_images:
-                for img in additional_images:
-                    if img.get("data"):
-                        content_items.append({
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{img['data']}"
-                            }
-                        })
-            
-            messages.append({
-                "role": "user",
-                "content": content_items
-            })
-            
-            model = "gpt-4o"  # Use model that supports vision
+        # Check for image
+        if image_url:
+            # Vision query - handle differently
+            messages.append(f"{HUMAN_PROMPT} This message contains an image: {image_url}. Here's my question: {prompt}")
+            model = "claude-3-5-sonnet-20240620"  # Use a model that supports vision
         else:
             # Text-only query
-            messages.append({"role": "user", "content": prompt})
+            messages.append(f"{HUMAN_PROMPT} {prompt}")
             
-            # Use O3 mini model as requested for everything except vision queries
-            model = "gpt-4o-mini"
-            logger.info(f"Using O3 mini model (gpt-4o-mini) for query")
+            # Use Claude 3.5 Haiku model as requested
+            model = "claude-3-5-haiku-20240307"
+            logger.info(f"Using Claude 3.5 Haiku model for query")
         
         # Add additional context if available
         additional_context = ""
@@ -311,18 +193,21 @@ async def generate_ai_response(prompt: str, is_serious: bool, image_data=None, s
         
         # Append additional context to the prompt
         if additional_context:
-            prompt = f"{prompt}\n\n--- اطلاعات تکمیلی ---\n{additional_context}"
+            messages.append(f"{HUMAN_PROMPT} Additional context for my query: {additional_context}")
         
         # Set max tokens based on query type - news queries need more space
-        max_tokens = 1000 if is_news_query else 500
+        max_tokens = 4000 if is_news_query else 2000
         
-        response = openai.ChatCompletion.create(
+        # Call Claude API
+        response = claude_client.messages.create(
             model=model,
-            messages=messages,
             max_tokens=max_tokens,
+            system=system_instructions,
+            messages=messages,
             temperature=0.8,  # Slightly higher temperature for more creative responses
         )
-        return response.choices[0].message.content.strip()
+        
+        return response.content[0].text
     except Exception as e:
         logger.error(f"Error generating AI response: {e}")
         return "متأسفم، در حال حاضر نمی‌توانم پاسخی تولید کنم. 😔"

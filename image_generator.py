@@ -1,6 +1,8 @@
 import os
 import logging
 import openai
+import anthropic
+from anthropic import HUMAN_PROMPT, AI_PROMPT
 import requests
 import tempfile
 import re
@@ -8,6 +10,9 @@ from io import BytesIO
 from typing import Optional, Tuple, List, Dict, Any
 
 logger = logging.getLogger(__name__)
+
+# Initialize the Anthropic client
+claude_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 def is_image_generation_request(text: str) -> bool:
     """
@@ -94,24 +99,24 @@ async def generate_image(prompt: str, size: str = "1024x1024") -> Tuple[Optional
         if any(c in prompt for c in 'ءآأؤإئابةتثجحخدذرزسشصضطظعغفقكلمنهوىيپچژکگی'):
             # The prompt seems to be in Persian, translate it to English for better results
             system_prompt = "You are a helpful translation assistant."
-            user_prompt = f"Translate the following text from Persian to English, focusing on making it a good image generation prompt. Don't add any explanations, just return the English translation:\n\n{prompt}"
             
-            response = openai.ChatCompletion.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
+            # Call Claude for translation
+            response = claude_client.messages.create(
+                model="claude-3-5-haiku-20240307",
                 max_tokens=250,
-                temperature=0.7
+                temperature=0.7,
+                system=system_prompt,
+                messages=[
+                    {"role": "user", "content": f"Translate the following text from Persian to English, focusing on making it a good image generation prompt. Don't add any explanations, just return the English translation:\n\n{prompt}"}
+                ]
             )
             
             # Get the translated prompt
-            translated_prompt = response.choices[0].message.content.strip()
+            translated_prompt = response.content[0].text.strip()
             logger.info(f"Translated prompt from Persian to English: {prompt} -> {translated_prompt}")
             prompt = translated_prompt
         
-        # Generate the image
+        # Generate the image using OpenAI DALL-E
         logger.info(f"Generating image with prompt: {prompt}")
         response = openai.Image.create(
             prompt=prompt,
