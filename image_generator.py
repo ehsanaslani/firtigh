@@ -99,20 +99,18 @@ async def generate_image(prompt: str, size: str = "1024x1024") -> Tuple[Optional
         if any(c in prompt for c in 'ءآأؤإئابةتثجحخدذرزسشصضطظعغفقكلمنهوىيپچژکگی'):
             # The prompt seems to be in Persian, translate it to English for better results
             system_prompt = "You are a helpful translation assistant."
+            user_prompt = f"Translate the following text from Persian to English, focusing on making it a good image generation prompt. Don't add any explanations, just return the English translation:\n\n{prompt}"
             
-            # Call Claude for translation
-            response = claude_client.messages.create(
+            # Call Claude for translation with v0.21.2 API
+            response = claude_client.completion(
+                prompt=f"{system_prompt}\n\n{user_prompt}",
                 model="claude-3-5-haiku-20240307",
-                max_tokens=250,
-                temperature=0.7,
-                system=system_prompt,
-                messages=[
-                    {"role": "user", "content": f"Translate the following text from Persian to English, focusing on making it a good image generation prompt. Don't add any explanations, just return the English translation:\n\n{prompt}"}
-                ]
+                max_tokens_to_sample=250,
+                temperature=0.7
             )
             
             # Get the translated prompt
-            translated_prompt = response.content[0].text.strip()
+            translated_prompt = response.completion.strip()
             logger.info(f"Translated prompt from Persian to English: {prompt} -> {translated_prompt}")
             prompt = translated_prompt
         

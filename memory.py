@@ -90,18 +90,16 @@ async def analyze_message_for_memory(message_data: Dict[str, Any]) -> Dict[str, 
     }}
     """
     
-    # Use Claude for analysis
-    response = claude_client.messages.create(
+    # Use Claude for analysis with v0.21.2 API
+    response = claude_client.completion(
+        prompt=prompt,
         model=MODEL_FOR_ANALYSIS,
-        messages=[
-            {"role": "user", "content": prompt}
-        ],
-        max_tokens=400,
+        max_tokens_to_sample=400,
         temperature=0.1  # Low temperature for consistent output
     )
     
     # Get the response content
-    result_text = response.content[0].text.strip()
+    result_text = response.completion.strip()
     
     # Handle potential errors in JSON parsing
     try:

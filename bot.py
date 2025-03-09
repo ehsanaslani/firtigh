@@ -1,27 +1,34 @@
 import os
-import logging
-import base64
-import tempfile
-import requests
+import sys
 import time
-import datetime
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from telegram.constants import ParseMode
-import openai
-from dotenv import load_dotenv
-from io import BytesIO
-import database
-import summarizer
-import web_search
-import web_extractor
-import usage_limits
-import memory
-import exchange_rates
-import image_generator
 import re
+import json
+import random
+import logging
+import asyncio
+from datetime import datetime
+from dotenv import load_dotenv
+import openai
 import anthropic
 from anthropic import HUMAN_PROMPT, AI_PROMPT
+import requests
+from io import BytesIO
+from telegram import Update, InputMediaPhoto, Message, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaAnimation, InputMediaDocument, BotCommand, ParseMode
+from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes, CallbackQueryHandler, CallbackContext
+from typing import Dict, List, Optional, Any, Tuple, Set, Union
+from urllib.parse import urlparse
+import database
+import web_search
+import web_extractor
+import memory
+import usage_limits
+import summarizer
+import link_processing
+import image_processing
+import exchange_rates
+import image_generator
+from group_isolation import get_group_chat_id
+from config import BOT_NAME
 
 # Load environment variables from .env file
 load_dotenv()
@@ -121,33 +128,19 @@ async def generate_ai_response(prompt: str, chat_history: Optional[str] = None,
             "Avoid unnecessarily formal language and aim for a friendly tone."
         )
         
-        # Create messages array starting with user context if available
-        messages = []
+        # Build the entire prompt
+        full_prompt = f"{system_instructions}\n\n"
         
         # Add chat history for context if available
         if chat_history:
-            history_context = f"پیام‌های اخیر در گروه:\n\n{chat_history}"
-            messages.append(f"{HUMAN_PROMPT} Context for my previous messages: {history_context}")
-            messages.append(f"{AI_PROMPT} Thanks for providing the chat history. I'll keep that in mind when responding to your message.")
+            full_prompt += f"Recent chat history:\n{chat_history}\n\n"
         
         # Add user profile for personalization if available
         if user_profile:
-            profile_context = f"اطلاعات پروفایل کاربر:\n\n{user_profile}"
-            messages.append(f"{HUMAN_PROMPT} Information about me: {profile_context}")
-            messages.append(f"{AI_PROMPT} Thanks for the information about you. I'll take that into account when responding.")
+            full_prompt += f"User profile information:\n{user_profile}\n\n"
         
-        # Check for image
-        if image_url:
-            # Vision query - handle differently
-            messages.append(f"{HUMAN_PROMPT} This message contains an image: {image_url}. Here's my question: {prompt}")
-            model = "claude-3-5-sonnet-20240620"  # Use a model that supports vision
-        else:
-            # Text-only query
-            messages.append(f"{HUMAN_PROMPT} {prompt}")
-            
-            # Use Claude 3.5 Haiku model as requested
-            model = "claude-3-5-haiku-20240307"
-            logger.info(f"Using Claude 3.5 Haiku model for query")
+        # Add the main prompt from the user
+        full_prompt += f"User query: {prompt}\n\n"
         
         # Add additional context if available
         additional_context = ""
@@ -160,54 +153,56 @@ async def generate_ai_response(prompt: str, chat_history: Optional[str] = None,
             if is_news_query:
                 # Special instructions for news queries
                 additional_context += (
-                    f"\n\nنتایج جستجوی اخبار:\n{search_results}\n\n"
-                    f"توجه: برای پاسخ به این پرسش خبری، لطفا:\n"
-                    f"1. تمام منابع خبری مذکور (با علامت 📄 منبع:) و لینک‌ها را دقیقاً همانطور که در نتایج جستجو آمده حفظ کنید\n"
-                    f"2. خبرها را دسته‌بندی کنید (مثلا سیاسی، اقتصادی، ورزشی)\n"
-                    f"3. لینک‌های خبرها را که با فرمت [مشاهده خبر کامل](URL) ارائه شده‌اند، دقیقاً حفظ کنید تا قابل کلیک باشند\n"
-                    f"4. حتماً بین ۵ تا ۱۵ خبر را در پاسخ خود بیاورید\n"
-                    f"5. برای هر خبر، منبع آن را ذکر کنید، مثلاً: «به گزارش [نام منبع]»\n"
-                    f"6. یک خلاصه کلی و مختصر از وضعیت اخبار در پایان ارائه دهید\n"
-                    f"7. هنگام بازنویسی لینک‌ها، دقیقاً از همان فرمت [متن توضیحی](URL) استفاده کنید و مطمئن شوید آدرس URL کامل و درست است\n"
-                    f"8. هرگز آدرس URL را بدون قرار دادن در فرمت [متن](URL) ننویسید زیرا قابل کلیک نخواهد بود\n"
+                    f"\n\nSearch results (news):\n{search_results}\n\n"
+                    f"Instructions for responding to this news query:\n"
+                    f"1. Maintain all news sources (marked with 📄) and links exactly as they appear in the search results\n"
+                    f"2. Categorize the news (e.g., political, economic, sports)\n"
+                    f"3. Preserve clickable links in the format [Full news](URL)\n"
+                    f"4. Include between 5-15 news items in your response\n"
+                    f"5. For each news item, cite the source\n"
+                    f"6. Provide a brief overall summary at the end\n"
+                    f"7. Always format links as [descriptive text](URL) to ensure they're clickable\n"
+                    f"8. Never include a raw URL without the [text](URL) format as it won't be clickable\n"
                 )
             else:
                 additional_context += (
-                    f"\n\nنتایج جستجوی اینترنتی:\n{search_results}\n\n"
-                    f"توجه: در پاسخ به سوال کاربر:\n"
-                    f"1. از اطلاعات این نتایج جستجو بهره‌گیری کنید\n"
-                    f"2. لینک‌های قابل کلیک را دقیقاً با همان فرمت [متن](URL) حفظ کنید\n"
-                    f"3. هر زمان می‌خواهید به منبعی اشاره کنید، از فرمت [عنوان منبع](لینک) استفاده کنید تا لینک قابل کلیک باشد\n"
-                    f"4. هرگز آدرس URL را به تنهایی ارائه ندهید، همیشه از فرمت [متن](URL) استفاده کنید\n"
+                    f"\n\nWeb search results:\n{search_results}\n\n"
+                    f"Instructions for using these search results:\n"
+                    f"1. Use information from these search results to answer the user's question\n"
+                    f"2. Preserve clickable links in the [text](URL) format\n"
+                    f"3. When referencing a source, use the format [source title](link) to keep the link clickable\n"
+                    f"4. Never include a raw URL without the [text](URL) format\n"
                 )
         
         # Add web content to the prompt if available
         if web_content:
             additional_context += (
-                f"\n\nمحتوای استخراج شده از لینک‌ها:\n{web_content}\n\n"
-                f"توجه: در پاسخ به سوال کاربر در مورد محتوای لینک:\n"
-                f"1. اطلاعات را خلاصه و دسته‌بندی کنید\n"
-                f"2. لینک اصلی را دقیقاً با فرمت [عنوان سایت یا صفحه](URL) در پاسخ خود قرار دهید تا قابل کلیک باشد\n"
-                f"3. اگر می‌خواهید به لینک‌های دیگری در محتوا اشاره کنید، آنها را نیز با فرمت [متن توضیحی](URL) قرار دهید\n"
+                f"\n\nExtracted content from links:\n{web_content}\n\n"
+                f"Instructions for using this content:\n"
+                f"1. Summarize and categorize the information\n"
+                f"2. Include the original link in your response as [site/page title](URL) to keep it clickable\n"
+                f"3. If referencing other links in the content, also format them as [descriptive text](URL)\n"
             )
         
         # Append additional context to the prompt
         if additional_context:
-            messages.append(f"{HUMAN_PROMPT} Additional context for my query: {additional_context}")
+            full_prompt += f"Additional information:{additional_context}"
         
         # Set max tokens based on query type - news queries need more space
         max_tokens = 4000 if is_news_query else 2000
         
-        # Call Claude API
-        response = claude_client.messages.create(
+        # Set the model - use Haiku for text-only, Sonnet for image queries
+        model = "claude-3-5-sonnet-20240620" if image_url else "claude-3-5-haiku-20240307"
+        
+        # Call Claude API using v0.21.2 format
+        response = claude_client.completion(
+            prompt=full_prompt,
             model=model,
-            max_tokens=max_tokens,
-            system=system_instructions,
-            messages=messages,
+            max_tokens_to_sample=max_tokens,
             temperature=0.8,  # Slightly higher temperature for more creative responses
         )
         
-        return response.content[0].text
+        return response.completion.strip()
     except Exception as e:
         logger.error(f"Error generating AI response: {e}")
         return "متأسفم، در حال حاضر نمی‌توانم پاسخی تولید کنم. 😔"
@@ -512,7 +507,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
             # Process for memory and user profiles
             # We use asyncio.create_task to process in the background without delaying response
-            import asyncio
             asyncio.create_task(memory.process_message_for_memory(message_data))
             
             # Check for name corrections

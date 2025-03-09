@@ -100,18 +100,18 @@ async def generate_chat_summary(days: int, chat_id: Optional[int] = None) -> str
         از بیان "در این گروه" یا "در این چت" خودداری کنید. به جای آن به موضوعات مستقیماً اشاره کنید.
         """
         
-        # Call Claude API for summarization
-        response = claude_client.messages.create(
+        # Full prompt for the API call
+        full_prompt = f"{system_prompt}\n\nلطفا تاریخچه پیام‌های زیر را خلاصه کنید:\n\n{message_history}"
+        
+        # Call Claude API for summarization using v0.21.2 format
+        response = claude_client.completion(
+            prompt=full_prompt,
             model="claude-3-5-haiku-20240307",
-            max_tokens=4000,
-            system=system_prompt,
-            messages=[
-                {"role": "user", "content": f"لطفا تاریخچه پیام‌های زیر را خلاصه کنید:\n\n{message_history}"}
-            ],
+            max_tokens_to_sample=4000,
             temperature=0.7
         )
         
-        summary = response.content[0].text.strip()
+        summary = response.completion.strip()
         
         # Add header for clarity
         days_text = "روز" if days == 1 else "روز"
