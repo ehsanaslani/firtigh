@@ -236,7 +236,8 @@ class TestBot(unittest.TestCase):
         self.assertIn(bot.BOT_FULL_NAME, system_content)
         self.assertIn("رک", system_content)  # Direct/blunt
         self.assertIn("مستقیم", system_content)  # Direct
-        self.assertIn("رکیک", system_content)  # Profanity/no filter
+        self.assertIn("زشت", system_content)  # Offensive language
+        self.assertIn("توهین", system_content)  # Insulting language
     
     @patch('openai.ChatCompletion.create')
     def test_generate_ai_response_error(self, mock_create):

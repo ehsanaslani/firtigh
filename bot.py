@@ -587,6 +587,36 @@ def escape_summary_for_markdown(text):
     
     return text
 
+def to_persian_numbers(text: str) -> str:
+    """
+    Convert English digits in a string to Persian digits.
+    
+    Args:
+        text (str): The text containing English digits
+        
+    Returns:
+        str: The text with English digits replaced by Persian digits
+    """
+    persian_digits = {
+        '0': '۰',
+        '1': '۱',
+        '2': '۲',
+        '3': '۳',
+        '4': '۴',
+        '5': '۵',
+        '6': '۶',
+        '7': '۷',
+        '8': '۸',
+        '9': '۹',
+        ',': '،',
+        '.': '٫'  # Persian decimal separator
+    }
+    
+    for english, persian in persian_digits.items():
+        text = text.replace(english, persian)
+    
+    return text
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle incoming messages."""
     # Skip processing if there's no message
@@ -734,6 +764,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if not query and not (update.message.photo or update.message.animation):
             await update.message.reply_text("من رو صدا زدی، ولی سوالی نپرسیدی. چطور می‌تونم کمکت کنم؟ 🤔")
             return
+
+        # Get sender info for the bot to address the user appropriately
+        sender_info = ""
+        user_id = None
+        if update.message.from_user:
+            user_id = update.message.from_user.id
+            sender_name = ""
+            # First try to get username
+            if update.message.from_user.username:
+                sender_name = update.message.from_user.username
+            # If no username, try first name + last name
+            elif update.message.from_user.first_name:
+                sender_name = update.message.from_user.first_name
+                if update.message.from_user.last_name:
+                    sender_name += f" {update.message.from_user.last_name}"
+            
+            # Add the sender info
+            if sender_name:
+                sender_info = f"Message from: {sender_name} (ID: {user_id})"
 
         # Check if this is a content summarization request
         if is_content_summarization_request(query):
@@ -997,40 +1046,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Get conversation context from reply chain
         conversation_context, media_data_list = await get_conversation_context(update, context)
         
-        # Get sender info for the bot to address the user appropriately
-        sender_info = ""
-        user_id = None
-        if update.message.from_user:
-            user_id = update.message.from_user.id
-            sender_name = ""
-            # First try to get username
-            if update.message.from_user.username:
-                sender_name = update.message.from_user.username
-            # If no username, try first name + last name
-            elif update.message.from_user.first_name:
-                sender_name = update.message.from_user.first_name
-                if update.message.from_user.last_name:
-                    sender_name += f" {update.message.from_user.last_name}"
+        # Process user information for AI
+        if user_id is not None and sender_name:
+            # Get Persian name if available
+            persian_name = memory.get_persian_name(sender_name)
             
-            if sender_name:
-                # Get Persian name if available
-                persian_name = memory.get_persian_name(sender_name)
-                
-                sender_info = (
-                    f"نام کاربر فرستنده پیام: {sender_name}\n"
-                    f"نام فارسی کاربر (اگر موجود باشد): {persian_name}\n"
-                    f"شناسه کاربر: {user_id}\n"
-                    f"(لطفاً در پاسخ خود، کاربر را با نام فارسی او خطاب کنید. "
-                    f"اگر نام فارسی او مشخص نیست، تلفظ صحیح فارسی نام او را حدس بزنید. "
-                    f"برای مثال، 'Mohsen' را به 'محسن' و 'Ali' را به 'علی' تبدیل کنید. "
-                    f"اگر نام او قبلاً تصحیح شده است، از همان نام تصحیح شده استفاده کنید.)\n"
-                )
+            # Update the sender info with more details for AI
+            sender_info = (
+                f"نام کاربر فرستنده پیام: {sender_name}\n"
+                f"نام فارسی کاربر (اگر موجود باشد): {persian_name}\n"
+                f"شناسه کاربر: {user_id}\n"
+                f"(لطفاً در پاسخ خود، کاربر را با نام فارسی او خطاب کنید. "
+                f"اگر نام فارسی او مشخص نیست، تلفظ صحیح فارسی نام او را حدس بزنید. "
+                f"برای مثال، 'Mohsen' را به 'محسن' و 'Ali' را به 'علی' تبدیل کنید. "
+                f"اگر نام او قبلاً تصحیح شده است، از همان نام تصحیح شده استفاده کنید.)\n"
+            )
         
         # Initialize variables for handling media
         image_data = None
         has_media = False
         media_description = ""
-
+        
         # Handle photos - add usage limits
         if update.message.photo:
             logger.info("Message contains photo")
@@ -1215,10 +1251,10 @@ async def toman_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             
             # Create the formatted response
             formatted_result = (
-                f"💵 *نرخ دلار آمریکا به تومان*\n\n"
-                f"قیمت خرید: *{formatted_buy} تومان*\n"
-                f"قیمت فروش: *{formatted_sell} تومان*\n"
-                f"تغییرات: {result.get('change_percent', 'N/A')}\n"
+                f"💵 *نرخ دلار آمریکا به ریال*\n\n"
+                f"قیمت خرید: *{to_persian_numbers(formatted_buy)} ریال*\n"
+                f"قیمت فروش: *{to_persian_numbers(formatted_sell)} ریال*\n"
+                f"تغییرات: {to_persian_numbers(result.get('change_percent', 'N/A'))}\n"
                 f"منبع: [alanchand.com]({result.get('source_url', 'https://alanchand.com/')})"
             )
         else:
@@ -1288,9 +1324,9 @@ async def currency_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 # Create the formatted response
                 formatted_result = (
                     f"💵 *نرخ {currency_name} به تومان*\n\n"
-                    f"قیمت خرید: *{formatted_buy} تومان*\n"
-                    f"قیمت فروش: *{formatted_sell} تومان*\n"
-                    f"تغییرات: {result.get('change_percent', 'N/A')}\n"
+                    f"قیمت خرید: *{to_persian_numbers(formatted_buy)} تومان*\n"
+                    f"قیمت فروش: *{to_persian_numbers(formatted_sell)} تومان*\n"
+                    f"تغییرات: {to_persian_numbers(result.get('change_percent', 'N/A'))}\n"
                     f"منبع: [alanchand.com]({result.get('source_url', 'https://alanchand.com/')})"
                 )
             else:
