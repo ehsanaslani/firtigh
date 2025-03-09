@@ -16,14 +16,42 @@ logger = logging.getLogger(__name__)
 
 async def is_history_request(text: str) -> bool:
     """Check if a message is asking for chat history or summary."""
-    history_keywords = [
-        "تاریخچه", "history", "گذشته", "خلاصه", "summary", "جمع بندی", "بحث", 
-        "گفتگو", "discussion", "چت", "chat", "روز قبل", "روز پیش", "روز گذشته", 
-        "هفته", "week", "اخیر", "recent", "آخرین"
+    # General history keywords
+    history_keywords = ["چت های قبلی", "گفتگوهای قبلی", "پیام‌های قبلی"]
+    
+    # Time-related keywords that indicate chat history
+    time_keywords = [
+        "روز قبل", "روز پیش", "روز گذشته", "هفته", "week", "اخیر", "recent", "آخرین"
+    ]
+    
+    # Specific phrases that clearly indicate chat history
+    specific_phrases = [
+        "خلاصه گفتگو", "خلاصه چت", "خلاصه بحث", "خلاصه پیام‌ها", 
+        "جمع‌بندی گفتگو", "جمع‌بندی چت", "جمع‌بندی بحث",
+        "summary of chat", "summary of discussion", "chat summary"
     ]
     
     text_lower = text.lower()
-    return any(keyword in text_lower for keyword in history_keywords)
+    
+    # Check for specific phrases first
+    if any(phrase in text_lower for phrase in specific_phrases):
+        return True
+    
+    # Check for combinations of history keywords and time keywords
+    has_history_keyword = any(keyword in text_lower for keyword in history_keywords)
+    has_time_keyword = any(keyword in text_lower for keyword in time_keywords)
+    
+    # If we have both a history keyword and a time keyword, it's likely a history request
+    if has_history_keyword and has_time_keyword:
+        return True
+    
+    # Check if "خلاصه" or "summary" is explicitly combined with chat/conversation terms
+    if "خلاصه" in text_lower or "summary" in text_lower or "جمع بندی" in text_lower:
+        chat_terms = ["گفتگو", "چت", "بحث", "پیام", "chat", "message", "discussion", "conversation"]
+        if any(term in text_lower for term in chat_terms):
+            return True
+    
+    return False
 
 async def extract_time_period(text: str) -> int:
     """Extract the time period (in days) from the request text."""

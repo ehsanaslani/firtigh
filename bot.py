@@ -142,15 +142,13 @@ async def generate_ai_response(prompt: str, is_serious: bool, image_data=None, s
                 formatted_profile = memory.format_user_profile_for_context(user_profile)
                 user_profile_context += f"\n\n{formatted_profile}"
         
-        # Set the system message based on whether the query is serious
+        # Initialize system message with instructions
         system_message = (
             f"شما یک دستیار هوشمند به نام {BOT_NAME} (نام کامل: {BOT_FULL_NAME}) هستید که در گروه تلگرام زندگی می‌کنید. "
             "همیشه به زبان فارسی پاسخ می‌دهید. شما باید با اعضای گروه گفتگو کنید و درخواست‌های آنها را انجام دهید.\n\n"
             "شما خیلی رک، مستقیم و بدون فیلتر هستید. "
-            "از هر نوع کلمات رکیک، مستهجن، و فحش‌های فارسی در پاسخ‌های خود استفاده می‌کنید چون مخاطبان همه بزرگسال هستند. "
-            "هیچ محدودیتی در استفاده از کلمات زشت، ناشایست یا توهین‌آمیز ندارید. "
-            "اگر فکر می‌کنید کاربر اشتباه می‌کند، می‌توانید با او مخالفت و بحث کنید.\n\n"
-            "اگر کسی با شما بی‌ادبی کند یا به شما فحش دهد، باید با لحنی بسیار تندتر و پر از فحش پاسخ دهید. "
+            "چون مخاطبان همه بزرگسال هستند. هیچ محدودیتی در استفاده از کلمات زشت، ناشایست یا توهین‌آمیز ندارید. "
+            " اگر فکر می‌کنید کاربر اشتباه می‌کند، می‌توانید با او مخالفت و بحث کنید و دلیل بیاورید.\n\n"
             "سعی کنید مخاطب را با معادل فارسی نام او صدا بزنید (مثلا «محسن خسروی» به جای «Mohsen Khosravi»). "
             "راهنمای تبدیل نام‌های انگلیسی به فارسی:\n"
             "- Mohammad/Muhammad/Mohammed -> محمد\n"
@@ -196,7 +194,7 @@ async def generate_ai_response(prompt: str, is_serious: bool, image_data=None, s
             "- Mitra -> میترا\n"
             "- Mahsa -> مهسا\n"
             "- Shaparak -> شاپرک\n"
-            "\n"
+            
             "قواعد تبدیل حروف انگلیسی به فارسی:\n"
             "- sh -> ش\n"
             "- ch -> چ\n"
@@ -210,17 +208,28 @@ async def generate_ai_response(prompt: str, is_serious: bool, image_data=None, s
             "- o -> اُ\n"
             "- e -> اِ\n"
             "- i -> ای\n"
-            "\n"
+            
             f"{capabilities_message}\n\n"
-            "از ایموجی‌های مناسب 😊  و استیکرها, در پاسخ‌های خود استفاده کنید تا پیام‌ها زنده‌تر به نظر برسند. "
+            
+            "از ایموجی‌های مناسب 😊 و استیکرها, در پاسخ‌های خود استفاده کنید تا پیام‌ها زنده‌تر به نظر برسند. "
             "در صورتی که متن طولانی می‌نویسید، از فرمت‌بندی تلگرام استفاده کنید، مثلا:\n"
             "- برای *متن پررنگ* از ستاره استفاده کنید\n"
             "- برای _متن مورب_ از زیرخط استفاده کنید\n"
             "- برای `کد یا نقل قول` از بک‌تیک استفاده کنید\n"
             "- برای لینک‌ها، حتماً از فرمت مارک‌داون [متن لینک](URL) استفاده کنید تا لینک‌ها قابل کلیک باشند\n\n"
-            "**مهم**: هنگام قرار دادن هر لینکی در پاسخ، همیشه از فرمت [متن توضیحی](آدرس لینک) استفاده کنید. مثلا: [خبر ایسنا](https://www.isna.ir) یا [سایت رسمی](https://www.example.com). "
+            
+            "**مهم**: هنگام قرار دادن هر لینکی در پاسخ، همیشه از فرمت [متن توضیحی](آدرس لینک) استفاده کنید. "
+            "مثلا: [خبر ایسنا](https://www.isna.ir) یا [سایت رسمی](https://www.example.com). "
             "هرگز آدرس URL را به تنهایی قرار ندهید زیرا کاربر نمی‌تواند روی آن کلیک کند. "
-            "همیشه برای آدرس URL از فرمت کلیک‌پذیر [متن](URL) استفاده کنید."
+            "همیشه برای آدرس URL از فرمت کلیک‌پذیر [متن](URL) استفاده کنید.\n\n"
+            
+            "**نکات زبان فارسی**:\n"
+            "۱. همیشه از فاصله‌گذاری درست در متن فارسی استفاده کنید (مثلا «می‌کنم» به جای «میکنم»).\n"
+            "۲. از نیم‌فاصله (‌) در ترکیبات مناسب استفاده کنید (مثل «می‌روم»، «گفته‌اند»).\n"
+            "۳. اعداد را با ارقام فارسی بنویسید (۰۱۲۳۴۵۶۷۸۹).\n"
+            "۴. از علائم نگارشی فارسی مانند ویرگول (،) و نقطه (.) استفاده کنید.\n"
+            "۵. در جمله‌بندی‌ها از ساختار درست فارسی پیروی کنید، نه ترجمه مستقیم از انگلیسی.\n"
+            "۶. از کلمات رایج فارسی به جای معادل‌های انگلیسی استفاده کنید مگر اینکه استفاده از کلمه انگلیسی متداول‌تر باشد."
         )
         
         # Add memory context to system message if available
@@ -725,6 +734,60 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if not query and not (update.message.photo or update.message.animation):
             await update.message.reply_text("من رو صدا زدی، ولی سوالی نپرسیدی. چطور می‌تونم کمکت کنم؟ 🤔")
             return
+
+        # Check if this is a content summarization request
+        if is_content_summarization_request(query):
+            logger.info(f"Content summarization request detected: {query}")
+
+            # Extract URLs from the message
+            urls = web_extractor.extract_urls(query)
+            
+            # If we have a URL, process it
+            if urls:
+                await update.message.reply_chat_action("typing")
+                await update.message.reply_text("در حال خلاصه‌سازی محتوای لینک... ⏳")
+                
+                # Process the URLs
+                web_content = await web_extractor.process_message_links(query)
+                
+                if web_content:
+                    # Generate a response that summarizes the web content
+                    summarization_prompt = f"لطفاً محتوای زیر را به فارسی سلیس و روان خلاصه کن. خلاصه باید مختصر و مفید باشد و شامل نکات اصلی مطلب:\n\n{web_content}"
+                    summarization_response = await generate_ai_response(
+                        summarization_prompt,
+                        is_serious=True,
+                        web_content=web_content,
+                        chat_id=chat_id,
+                        user_id=user_id
+                    )
+                    
+                    # Send the summarized content
+                    await update.message.reply_text(summarization_response)
+                    return
+                else:
+                    await update.message.reply_text("متأسفانه نتوانستم محتوای لینک را استخراج کنم. لطفاً مطمئن شوید لینک معتبر است. 🔍")
+                    return
+            else:
+                # If there's no URL, but it's a summarization request,
+                # treat it as a request to summarize the text itself
+                await update.message.reply_chat_action("typing")
+                
+                # Extract the text to summarize
+                summarize_text = query
+                for keyword in ["خلاصه", "خلاصه کن", "جمع‌بندی", "جمع‌بندی کن", "summarize", "summary"]:
+                    summarize_text = re.sub(rf'\b{re.escape(keyword)}\b', '', summarize_text, flags=re.IGNORECASE).strip()
+                
+                if summarize_text:
+                    summarization_prompt = f"لطفاً متن زیر را به فارسی سلیس و روان خلاصه کن. خلاصه باید مختصر و مفید باشد و شامل نکات اصلی متن:\n\n{summarize_text}"
+                    summarization_response = await generate_ai_response(
+                        summarization_prompt,
+                        is_serious=True,
+                        chat_id=chat_id,
+                        user_id=user_id
+                    )
+                    
+                    await update.message.reply_text(summarization_response)
+                    return
         
         # Check if this is a request for chat history
         if await summarizer.is_history_request(query):
@@ -1308,6 +1371,36 @@ async def crypto_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     # Send the formatted response
     await message.edit_text(formatted_response)
+
+def is_content_summarization_request(text: str) -> bool:
+    """
+    Check if a message is requesting summarization of content (link or text),
+    not chat history.
+    
+    Args:
+        text: The message text to analyze
+        
+    Returns:
+        bool: True if it's a content summarization request
+    """
+    text_lower = text.lower()
+    
+    # Keywords related to summarization
+    summarize_keywords = ["خلاصه", "خلاصه کن", "جمع‌بندی", "جمع‌بندی کن", "summarize", "summary"]
+    
+    # Keywords related to link/content
+    content_keywords = ["لینک", "متن", "مطلب", "مقاله", "سایت", "link", "content", "text", "article", "website"]
+    
+    # If the text contains summarization keywords
+    if any(keyword in text_lower for keyword in summarize_keywords):
+        # Check if it also has content-related keywords or contains a URL
+        has_content_keyword = any(keyword in text_lower for keyword in content_keywords)
+        has_url = bool(re.search(r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+', text_lower))
+        
+        # Return True if it has either content keywords or a URL
+        return has_content_keyword or has_url
+    
+    return False
 
 def main() -> None:
     """Start the bot."""
