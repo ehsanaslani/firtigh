@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import logging
 import time
@@ -6,7 +7,9 @@ import datetime
 from typing import List, Dict, Any, Optional, Set
 from collections import defaultdict
 import openai
-import anthropic
+
+# Import config for model settings
+import config
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -24,10 +27,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 MAX_MEMORY_ITEMS_PER_GROUP = 100  # Increased from 30 to 100
 MAX_PROFILE_CHARACTERISTICS = 20  # Increased from 10 to 20
 MEMORY_REFRESH_DAYS = 30  # How long before a memory item is considered "old"
-MODEL_FOR_ANALYSIS = "claude-3-5-haiku-20240307"
-
-# Initialize the Anthropic client
-claude_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+MODEL_FOR_ANALYSIS = config.OPENAI_MODEL_ANALYSIS  # Use the model specified in config
 
 def initialize_memory():
     """Initialize the memory files if they don't exist."""
@@ -51,104 +51,105 @@ def initialize_memory():
 
 async def analyze_message_for_memory(message_data: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Analyze a message to extract key information and determine memorability.
+    Analyze a message to extract potential memory items.
     
     Args:
-        message_data: Dictionary containing message data
-        
+        message_data: Dictionary containing message information
+    
     Returns:
-        Dictionary with memory metadata
+        Dictionary with extracted topics, sentiment, and other information
     """
-    message_text = message_data.get("text", "")
-    if not message_text or len(message_text) < 5:
-        return {
-            "is_memorable": False,
-            "reason": "Message too short"
-        }
-    
-    # Prepare prompt for analysis
-    prompt = f"""
-    Analyze this message for memorability and extract key information.
-    
-    Message: "{message_text}"
-    
-    Instructions:
-    1. Determine if this message contains information worth remembering
-    2. Extract key topics discussed
-    3. Extract key points or claims
-    4. Determine overall sentiment (positive, negative, neutral)
-    5. Extract any personal information about the sender
-    
-    Respond with a JSON object in this format:
-    {{
-        "is_memorable": boolean, // true if worth remembering
-        "reason": string, // brief reason why memorable or not
-        "topics": list of strings, // key topics (max 3)
-        "key_points": list of strings, // important points (max 3)
-        "sentiment": string, // "positive", "negative", or "neutral"
-        "sender_traits": list of strings // personality traits or facts about sender (max 3)
-    }}
-    """
-    
-    # Use Claude for analysis with v0.21.2 API
-    response = claude_client.completion(
-        prompt=prompt,
-        model=MODEL_FOR_ANALYSIS,
-        max_tokens_to_sample=400,
-        temperature=0.1  # Low temperature for consistent output
-    )
-    
-    # Get the response content
-    result_text = response.completion.strip()
-    
-    # Handle potential errors in JSON parsing
     try:
-        # Find and extract just the JSON part
-        start_idx = result_text.find('{')
-        end_idx = result_text.rfind('}') + 1
+        text = message_data.get("text", "")
         
-        if start_idx >= 0 and end_idx > start_idx:
-            json_str = result_text[start_idx:end_idx]
-            analysis = json.loads(json_str)
-        else:
-            # If no JSON markers found, try to parse the whole response
-            analysis = json.loads(result_text)
+        # Skip empty or very short messages
+        if not text or len(text) < 10:
+            return {}
         
-        # Add additional metadata
-        analysis["message_id"] = message_data.get("message_id")
-        analysis["message_text"] = message_text
-        analysis["timestamp"] = message_data.get("date", time.time())
-        analysis["sender_id"] = message_data.get("sender_id")
-        analysis["sender_name"] = message_data.get("sender_name", "Unknown")
+        # Prepare the prompt for analysis
+        prompt = f"""
+        Analyze the following message for important information that should be remembered:
         
-        return analysis
-    except json.JSONDecodeError as e:
-        logger.error(f"Error parsing memory analysis: {e}")
-        # Return a simple analysis to avoid blocking the message processing
-        return {
-            "is_memorable": len(message_text) > 50,  # Consider longer messages potentially memorable
-            "reason": "Automatic analysis (parsing error)",
-            "topics": [],
-            "key_points": [message_text[:100] + "..."] if len(message_text) > 100 else [message_text],
-            "sentiment": "neutral",
-            "sender_traits": [],
-            "message_id": message_data.get("message_id"),
-            "message_text": message_text,
-            "timestamp": message_data.get("date", time.time()),
-            "sender_id": message_data.get("sender_id"),
-            "sender_name": message_data.get("sender_name", "Unknown")
-        }
+        MESSAGE: {text}
+        
+        Provide a JSON response with these fields:
+        1. topics: List of up to 5 main topics/subjects discussed
+        2. sentiment: Overall emotional tone (positive, negative, neutral)
+        3. key_points: List of up to 5 factual statements that would be valuable to remember long-term
+        4. user_traits: List of personality traits the user exhibits in this message
+        5. is_memorable: Boolean indicating if this message contains information worth remembering long-term
+        6. interests: List of 3-5 potential interests the user might have based on this message
+        7. tone: The tone of the message (formal, informal, friendly, aggressive, sarcastic, etc.)
+        8. language_quality: Assessment of language use (articulate, basic, technical, etc.)
+        """
+        
+        # Use O3 mini model for analysis
+        response = openai.ChatCompletion.create(
+            model=MODEL_FOR_ANALYSIS,
+            messages=[
+                {"role": "system", "content": "You are an AI that extracts key information from messages for memory purposes. Respond ONLY with the requested JSON format."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=400,
+            temperature=0.1  # Low temperature for consistent output
+        )
+        
+        # Get the response content
+        result_text = response.choices[0].message.content.strip()
+        
+        # Handle potential errors in JSON parsing
+        try:
+            # Find and extract just the JSON part
+            start_idx = result_text.find('{')
+            end_idx = result_text.rfind('}') + 1
+            
+            if start_idx >= 0 and end_idx > start_idx:
+                json_text = result_text[start_idx:end_idx]
+                result = json.loads(json_text)
+            else:
+                # Fallback if no JSON braces found
+                result = {
+                    "topics": [],
+                    "sentiment": "neutral",
+                    "key_points": [],
+                    "user_traits": [],
+                    "is_memorable": False,
+                    "interests": [],
+                    "tone": "neutral",
+                    "language_quality": "standard"
+                }
+            
+            # Add metadata
+            result["timestamp"] = time.time()
+            result["message_id"] = message_data.get("message_id")
+            result["message_text"] = text[:300]  # Store larger snippet (increased from 200)
+            result["sender_id"] = message_data.get("sender_id")
+            result["sender_name"] = message_data.get("sender_name")
+            
+            return result
+            
+        except json.JSONDecodeError:
+            logger.error(f"Failed to parse analysis result as JSON: {result_text}")
+            # Return a basic result
+            return {
+                "topics": [],
+                "sentiment": "neutral",
+                "key_points": [],
+                "user_traits": [],
+                "is_memorable": False,
+                "interests": [],
+                "tone": "neutral",
+                "language_quality": "standard",
+                "timestamp": time.time(),
+                "message_id": message_data.get("message_id"),
+                "message_text": text[:300],
+                "sender_id": message_data.get("sender_id"),
+                "sender_name": message_data.get("sender_name")
+            }
+            
     except Exception as e:
-        logger.error(f"Unexpected error in memory analysis: {e}")
-        return {
-            "is_memorable": False,
-            "reason": "Analysis error",
-            "message_id": message_data.get("message_id"),
-            "message_text": message_text,
-            "timestamp": message_data.get("date", time.time()),
-            "sender_id": message_data.get("sender_id"),
-            "sender_name": message_data.get("sender_name", "Unknown")
-        }
+        logger.error(f"Error analyzing message for memory: {e}")
+        return {}
 
 async def update_group_memory(chat_id: int, memory_item: Dict[str, Any]):
     """
@@ -612,7 +613,7 @@ async def process_message_for_memory(message_data: Dict[str, Any]):
             await update_user_profile(
                 user_id, 
                 message_data["sender_name"],
-                memory_item.get("sender_traits", []),
+                memory_item.get("user_traits", []),
                 memory_item.get("topics", []),
                 memory_item.get("sentiment", "neutral"),
                 memory_item.get("interests", []),

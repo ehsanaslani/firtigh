@@ -1,18 +1,16 @@
 import os
 import logging
 import openai
-import anthropic
-from anthropic import HUMAN_PROMPT, AI_PROMPT
 import requests
 import tempfile
 import re
 from io import BytesIO
 from typing import Optional, Tuple, List, Dict, Any
 
-logger = logging.getLogger(__name__)
+# Import config for model settings
+import config
 
-# Initialize the Anthropic client
-claude_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+logger = logging.getLogger(__name__)
 
 def is_image_generation_request(text: str) -> bool:
     """
@@ -101,20 +99,22 @@ async def generate_image(prompt: str, size: str = "1024x1024") -> Tuple[Optional
             system_prompt = "You are a helpful translation assistant."
             user_prompt = f"Translate the following text from Persian to English, focusing on making it a good image generation prompt. Don't add any explanations, just return the English translation:\n\n{prompt}"
             
-            # Call Claude for translation with v0.21.2 API
-            response = claude_client.completion(
-                prompt=f"{system_prompt}\n\n{user_prompt}",
-                model="claude-3-5-haiku-20240307",
-                max_tokens_to_sample=250,
+            response = openai.ChatCompletion.create(
+                model=config.OPENAI_MODEL_TRANSLATION,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_tokens=250,
                 temperature=0.7
             )
             
             # Get the translated prompt
-            translated_prompt = response.completion.strip()
+            translated_prompt = response.choices[0].message.content.strip()
             logger.info(f"Translated prompt from Persian to English: {prompt} -> {translated_prompt}")
             prompt = translated_prompt
         
-        # Generate the image using OpenAI DALL-E
+        # Generate the image
         logger.info(f"Generating image with prompt: {prompt}")
         response = openai.Image.create(
             prompt=prompt,

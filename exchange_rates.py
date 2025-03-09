@@ -348,14 +348,14 @@ def format_exchange_rate_result(result: dict) -> str:
     change = result.get("change_percent", "N/A")
     if change and "%" in change:
         try:
-            change_value = float(change.replace("%", "").strip())
-            if change_value > 0:
-                change_icon = "🟢"
-            elif change_value < 0:
-                change_icon = "🔴"
-            else:
-                change_icon = "⚪"
-            change_formatted = f"{change_icon} {change}"
+        change_value = float(change.replace("%", "").strip())
+        if change_value > 0:
+            change_icon = "🟢"
+        elif change_value < 0:
+            change_icon = "🔴"
+        else:
+            change_icon = "⚪"
+        change_formatted = f"{change_icon} {change}"
         except (ValueError, TypeError):
             change_formatted = change
     else:
@@ -394,8 +394,8 @@ async def get_usd_toman_rate() -> dict:
     if not rial_result.get("success", False):
         return rial_result
     
-    # Convert Rial to Toman
-    try:
+        # Convert Rial to Toman
+        try:
         # Convert all the rates to Toman
         for key in ["current_rate", "buy_rate", "sell_rate", "high", "low"]:
             if rial_result.get(key):

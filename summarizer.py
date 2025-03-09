@@ -1,117 +1,100 @@
-import logging
-import openai
-import anthropic
-from anthropic import HUMAN_PROMPT, AI_PROMPT
-import database
-import re
 import os
-from typing import Optional, List, Dict, Any
+import re
+import json
+import openai
+import logging
+from typing import Dict, List, Any, Optional
+from datetime import datetime, timedelta
+
+# Import config for model settings
+import config
+
+# Import database to fetch chat history
+import database
 
 logger = logging.getLogger(__name__)
 
-# Initialize the Anthropic client
-claude_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-
 async def is_history_request(text: str) -> bool:
-    """Check if the text contains a request for chat history."""
-    if not text:
-        return False
-    
-    # Regular expressions for history-related phrases
-    history_patterns = [
-        r'خلاصه(?:ی| |‌ی)?(?:.*?)(?:گفتگو|چت|صحبت|بحث)',
-        r'تاریخچه(?:ی| |‌ی)?(?:.*?)(?:گفتگو|چت|صحبت|بحث)',
-        r'(?:گفتگو|چت|صحبت|بحث)(?:.*?)(?:خلاصه|جمع[ ]?بندی) کن',
-        r'چه چیزهایی (?:گفته شد|بحث شد|صحبت شد)',
-        r'چی (?:گفته شد|بحث شد|صحبت شد)',
-        r'summarize (?:the )?chat',
-        r'chat (?:history|summary)'
+    """Check if a message is asking for chat history or summary."""
+    history_keywords = [
+        "تاریخچه", "history", "گذشته", "خلاصه", "summary", "جمع بندی", "بحث", 
+        "گفتگو", "discussion", "چت", "chat", "روز قبل", "روز پیش", "روز گذشته", 
+        "هفته", "week", "اخیر", "recent", "آخرین"
     ]
     
-    for pattern in history_patterns:
-        if re.search(pattern, text, re.IGNORECASE):
-            return True
-    
-    return False
+    text_lower = text.lower()
+    return any(keyword in text_lower for keyword in history_keywords)
 
 async def extract_time_period(text: str) -> int:
-    """
-    Extract time period from a request.
+    """Extract the time period (in days) from the request text."""
+    # Default to 3 days
+    default_days = 3
     
-    Returns number of days to summarize (default: 1)
-    """
-    # Default to 1 day if no specific time mentioned
-    days = 1
+    # Check for common time periods in Persian and English
+    if "یک روز" in text or "دیروز" in text or "yesterday" in text or "1 day" in text or "one day" in text:
+        return 1
+    elif "دو روز" in text or "2 day" in text or "two day" in text:
+        return 2
+    elif "سه روز" in text or "3 day" in text or "three day" in text:
+        return 3
+    elif "چهار روز" in text or "4 day" in text or "four day" in text:
+        return 4
+    elif "پنج روز" in text or "5 day" in text or "five day" in text:
+        return 5
+    elif "شش روز" in text or "6 day" in text or "six day" in text:
+        return 6
+    elif "هفت روز" in text or "یک هفته" in text or "7 day" in text or "seven day" in text or "week" in text:
+        return 7
+    elif "ده روز" in text or "10 day" in text or "ten day" in text:
+        return 10
+    elif "یک ماه" in text or "30 day" in text or "thirty day" in text or "month" in text:
+        return 30
     
-    # Check for specific time mentions
-    if re.search(r'(?:هفته|week)', text, re.IGNORECASE):
-        days = 7
-    elif re.search(r'(?:ماه|month)', text, re.IGNORECASE):
-        days = 30
-    elif re.search(r'(?:دو|۲|2).*(?:روز|day)', text, re.IGNORECASE):
-        days = 2
-    elif re.search(r'(?:سه|۳|3).*(?:روز|day)', text, re.IGNORECASE):
-        days = 3
-    elif re.search(r'(?:چهار|۴|4).*(?:روز|day)', text, re.IGNORECASE):
-        days = 4
-    elif re.search(r'(?:پنج|۵|5).*(?:روز|day)', text, re.IGNORECASE):
-        days = 5
-    
-    return days
+    return default_days
 
 async def generate_chat_summary(days: int, chat_id: Optional[int] = None) -> str:
     """
-    Generate a summary of chat history.
+    Generate a summary of chat history using OpenAI.
     
     Args:
-        days: Number of days to include in the summary
-        chat_id: Specific chat to summarize (or None for all chats)
-        
+        days: Number of days to look back
+        chat_id: If provided, only summarize messages from this chat
+    
     Returns:
-        A text summary of the chat history
+        A summary of the chat history
     """
     try:
-        # Get messages from the database
-        messages = database.get_messages(days=days, chat_id=chat_id)
+        # Get formatted message history
+        message_history = database.get_formatted_message_history(days, chat_id)
         
-        if not messages:
-            return "در این بازه زمانی پیامی یافت نشد."
+        if "No messages found" in message_history:
+            return "در این بازه زمانی هیچ پیامی ذخیره نشده است. 🤷‍♂️"
         
-        # Format messages for the summary
-        message_history = ""
-        for msg in messages:
-            sender = msg.get("sender_name", "ناشناس")
-            text = msg.get("text", "")
-            if text:
-                message_history += f"{sender}: {text}\n\n"
+        # Prepare system prompt
+        system_prompt = (
+            "شما یک خلاصه‌کننده حرفه‌ای هستید که باید تاریخچه پیام‌های یک گروه تلگرام را به زبان فارسی خلاصه کنید. "
+            "سعی کنید خلاصه مختصر اما جامع باشد و موضوعات اصلی گفتگو را پوشش دهد. "
+            "ایموجی‌های مناسب را نیز اضافه کنید تا خلاصه برای خواننده جذاب‌تر شود. "
+            "از فرمت تلگرام استفاده کنید (مثلا *متن پررنگ* برای موضوعات مهم). "
+            "خلاصه باید شامل نام افرادی باشد که فعال‌ترین بوده‌اند. "
+            "تاریخ‌های مهم را نیز ذکر کنید."
+        )
         
-        # Prepare the prompt
-        system_prompt = """
-        شما یک دستیار هوشمند برای خلاصه‌سازی پیام‌های گروه هستید. وظیفه شما تهیه یک خلاصه سازمان‌یافته و ساختارمند از پیام‌های یک گروه تلگرام است.
+        # Create API request
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"لطفا تاریخچه پیام‌های زیر را خلاصه کنید:\n\n{message_history}"}
+        ]
         
-        در خلاصه خود:
-        1. موضوعات اصلی بحث را دسته‌بندی کنید
-        2. نکات مهم و اطلاعات کلیدی را استخراج کنید
-        3. به ترتیب زمانی مباحث اشاره کنید
-        4. از فرمت مارک‌داون تلگرام استفاده کنید (مثلاً *متن پررنگ* برای تیترها)
-        5. از ایموجی‌های مناسب استفاده کنید
-        6. خلاصه را به بخش‌های منطقی تقسیم کنید
-        
-        از بیان "در این گروه" یا "در این چت" خودداری کنید. به جای آن به موضوعات مستقیماً اشاره کنید.
-        """
-        
-        # Full prompt for the API call
-        full_prompt = f"{system_prompt}\n\nلطفا تاریخچه پیام‌های زیر را خلاصه کنید:\n\n{message_history}"
-        
-        # Call Claude API for summarization using v0.21.2 format
-        response = claude_client.completion(
-            prompt=full_prompt,
-            model="claude-3-5-haiku-20240307",
-            max_tokens_to_sample=4000,
+        # Call OpenAI API
+        response = openai.ChatCompletion.create(
+            model=config.OPENAI_MODEL_SUMMARY,
+            messages=messages,
+            max_tokens=1000,
             temperature=0.7
         )
         
-        summary = response.completion.strip()
+        summary = response.choices[0].message.content.strip()
         
         # Add header for clarity
         days_text = "روز" if days == 1 else "روز"
@@ -120,4 +103,4 @@ async def generate_chat_summary(days: int, chat_id: Optional[int] = None) -> str
         return header + summary
     except Exception as e:
         logger.error(f"Error generating chat summary: {e}")
-        return "متأسفانه در تهیه خلاصه گفتگو مشکلی پیش آمد. لطفاً بعداً دوباره تلاش کنید." 
+        return "متأسفانه در خلاصه‌سازی تاریخچه پیام‌ها مشکلی پیش آمد. 😔" 
