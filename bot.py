@@ -8,6 +8,7 @@ import pytz
 import asyncio
 import aiohttp
 import requests
+import base64
 from io import BytesIO
 from dotenv import load_dotenv
 from datetime import datetime, timezone, timedelta
@@ -1330,7 +1331,7 @@ def main() -> None:
     logger.info(f"Using model for analysis: {memory.MODEL_FOR_ANALYSIS}")
     
     # Create the Application
-    application = Application.builder().token(token).build()
+    application = ApplicationBuilder().token(token).build()
 
     # Add handlers
     application.add_handler(CommandHandler("start", start))
