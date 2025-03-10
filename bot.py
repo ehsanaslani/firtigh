@@ -92,7 +92,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /help is issued."""
-    help_text = """🤖 **راهنمای دستورات**
+    help_text = """🤖 *راهنمای دستورات*
 
 /start - شروع کار با ربات
 /help - نمایش این پیام راهنما
@@ -101,7 +101,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 برای استفاده از ربات کافیست سوال خود را بپرسید یا @BotName را در گفتگو‌های گروهی منشن کنید.
 """
-    await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
+    # Use standard Markdown mode (not V2) which is simpler and less strict with escaping
+    try:
+        await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        # Fall back to plain text if any errors
+        logger.error(f"Error sending help with Markdown: {e}")
+        plain_text = help_text.replace('*', '')  # Remove markdown symbols
+        await update.message.reply_text(plain_text, parse_mode=None)
 
 async def token_usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show token usage statistics for authorized users."""
@@ -123,29 +130,24 @@ async def token_usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Generate the token usage report
         report = token_tracking.format_token_usage_report(days=days)
         
-        # Since the report contains special characters like '.', '$', ':', etc.,
-        # which are reserved in Markdown V2, we need to escape them or use a different approach
-        
+        # Send as plain text with no Markdown formatting to avoid escaping issues
+        await update.message.reply_text(
+            f"Token Usage Report ({days} days):\n\n{report}",
+            parse_mode=None  # No parsing, just plain text
+        )
+    else:
+        # Not authorized - for this short message, escaping is simpler
         try:
-            # Option 1: Escape all special characters for Markdown V2
-            escaped_report = escape_markdown_v2(report)
             await update.message.reply_text(
-                f"```\n{escaped_report}\n```",
+                "این دستور فقط برای مدیران سیستم در دسترس است\\.",
                 parse_mode=ParseMode.MARKDOWN_V2
             )
-        except Exception as e:
-            # Option 2: If escaping fails, send as plain text without formatting
-            logger.error(f"Error sending formatted token report: {e}")
+        except Exception:
+            # Fallback to plain text if any error
             await update.message.reply_text(
-                f"Token Usage Report ({days} days):\n\n{report}",
-                parse_mode=None  # No parsing, just plain text
+                "این دستور فقط برای مدیران سیستم در دسترس است.",
+                parse_mode=None
             )
-    else:
-        # Not authorized
-        await update.message.reply_text(
-            "این دستور فقط برای مدیران سیستم در دسترس است.",
-            parse_mode=ParseMode.MARKDOWN_V2
-        )
 
 async def token_optimize_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show information about token usage optimizations."""
