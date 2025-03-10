@@ -223,7 +223,7 @@ async def generate_ai_response(
         use_vision = bool(media_data) or bool(additional_images)
         
         # Use a more concise system message to reduce token usage
-        system_message = """ربات فارسی‌زبان با لحن دوستانه که به سوالات پاسخ می‌دهد. طرفدار سرسخت و دو آتیشه پرسپولیس است همیشه به فارسی پاسخ بده، از ایموجی استفاده کن، اعداد و اسامی را به فارسی بنویس، و برای اطلاعات به‌روز از توابع جستجو استفاده کن."""
+        system_message = """ربات فارسی‌زبان با لحن دوستانه که به سوالات پاسخ می‌دهد. همیشه به فارسی پاسخ بده، از ایموجی استفاده کن، اعداد و اسامی را به فارسی بنویس، و برای اطلاعات به‌روز از توابع جستجو استفاده کن."""
 
         # Adjust system message based on conversation tone
         if is_serious:
@@ -265,60 +265,80 @@ async def generate_ai_response(
                     "text": prompt
                 })
                 
-                # Add the first image
-                content.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{base64.b64encode(media_data).decode('utf-8')}"
-                    }
-                })
+                # Add the first image if valid
+                if media_data is not None:
+                    try:
+                        content.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64.b64encode(media_data).decode('utf-8')}"
+                            }
+                        })
+                    except TypeError as e:
+                        logger.error(f"Error encoding main image: {e}")
+                        # Don't add if invalid
                 
                 # Add additional images if available
                 if additional_images:
                     for img_data in additional_images:
-                        content.append({
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64.b64encode(img_data).decode('utf-8')}"
-                            }
-                        })
+                        if img_data is not None:
+                            try:
+                                content.append({
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/jpeg;base64,{base64.b64encode(img_data).decode('utf-8')}"
+                                    }
+                                })
+                            except TypeError as e:
+                                logger.error(f"Error encoding additional image: {e}")
+                                # Skip this image if invalid
                 
-                # Use the GPT-4 Vision model with appropriate client version
-                if openai_functions.is_new_openai:
-                    response = openai_functions.openai_client.chat.completions.create(
-                        model=OPENAI_MODEL_VISION,
-                        messages=[
-                            {"role": "system", "content": system_message},
-                            {"role": "user", "content": content}
-                        ],
-                        max_tokens=800,  # Reduced from 1000
-                        temperature=0.7
-                    )
-                    # Log token usage
-                    log_token_usage(response, OPENAI_MODEL_VISION, "Vision API")
-                else:
-                    response = await openai_functions.openai_client.ChatCompletion.acreate(
-                        model=OPENAI_MODEL_VISION,
-                        messages=[
-                            {"role": "system", "content": system_message},
-                            {"role": "user", "content": content}
-                        ],
-                        max_tokens=800,  # Reduced from 1000
-                        temperature=0.7
-                    )
-                    # Log token usage
-                    log_token_usage(response, OPENAI_MODEL_VISION, "Vision API")
+                # Make sure we have at least one image, otherwise use standard model
+                has_image = any(item.get("type") == "image_url" for item in content)
                 
-                if openai_functions.is_new_openai:
-                    return response.choices[0].message.content
+                if not has_image:
+                    # Fall back to text-only model if no valid images
+                    logger.warning("Vision requested but no valid images found, falling back to text-only model")
+                    use_vision = False
+                    # Continue with standard model below
                 else:
-                    return response.choices[0].message.content
+                    # Use the GPT-4 Vision model with appropriate client version
+                    if openai_functions.is_new_openai:
+                        response = openai_functions.openai_client.chat.completions.create(
+                            model=OPENAI_MODEL_VISION,
+                            messages=[
+                                {"role": "system", "content": system_message},
+                                {"role": "user", "content": content}
+                            ],
+                            max_tokens=800,  # Reduced from 1000
+                            temperature=0.7
+                        )
+                        # Log token usage
+                        log_token_usage(response, OPENAI_MODEL_VISION, "Vision API")
+                    else:
+                        response = await openai_functions.openai_client.ChatCompletion.acreate(
+                            model=OPENAI_MODEL_VISION,
+                            messages=[
+                                {"role": "system", "content": system_message},
+                                {"role": "user", "content": content}
+                            ],
+                            max_tokens=800,  # Reduced from 1000
+                            temperature=0.7
+                        )
+                        # Log token usage
+                        log_token_usage(response, OPENAI_MODEL_VISION, "Vision API")
+                    
+                    if openai_functions.is_new_openai:
+                        return response.choices[0].message.content
+                    else:
+                        return response.choices[0].message.content
                 
             except Exception as e:
                 logger.error(f"Error in vision API call: {e}", exc_info=True)
                 return "متأسفانه در پردازش تصویر مشکلی پیش آمد. لطفاً دوباره تلاش کنید."
                 
-        else:
+        # If vision failed or was not requested, use the standard model
+        if not use_vision:
             # Use the standard model with function calling
             try:
                 # Import the function definitions and select only necessary ones
