@@ -1,159 +1,149 @@
-import logging
-import json
-import asyncio
-from typing import Dict, List, Any, Optional, Tuple
-import database
-import web_search
-import web_extractor
-import config
-from datetime import datetime, timedelta
-import aiohttp
-from information_services import WeatherService
-import os
+"""
+OpenAI function calling support for the bot.
+"""
 
-# Set up logging
+import os
+import json
+import logging
+import time
+from datetime import datetime
+from typing import Dict, Any, List, Optional, Union, Tuple
+
+# Configure logger
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize OpenAI client with version compatibility
+# Determine which version of OpenAI we're using
 try:
-    # First try to detect which version is installed
+    from openai import OpenAI
+    openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+    is_new_openai = True
+    logger.info("Using OpenAI API v1.0.0+ client")
+except ImportError:
+    # Fall back to older openai package
     import openai
-    
-    # Check if this is the newer OpenAI client (1.0.0+)
-    if hasattr(openai, "OpenAI"):
-        from openai import OpenAI
-        openai_client = OpenAI(api_key=config.OPENAI_API_KEY)
-        is_new_openai = True
-        logger.info("Using OpenAI API v1.0.0+ client")
-    else:
-        # This is the older OpenAI client (pre-1.0.0)
-        openai.api_key = config.OPENAI_API_KEY
-        openai_client = openai
-        is_new_openai = False
-        logger.info("Using OpenAI API legacy client (pre-1.0.0)")
-except ImportError as e:
-    logger.error(f"Error importing OpenAI: {str(e)}")
-    # Fallback to older client as a last resort
-    import openai
-    openai.api_key = config.OPENAI_API_KEY
     openai_client = openai
+    openai_client.api_key = os.environ.get("OPENAI_API_KEY")
     is_new_openai = False
-    logger.info("Failed to import newer OpenAI client, falling back to legacy client")
+    logger.info("Using legacy OpenAI API client")
+
+# Define function schemas for OpenAI function calling
+FUNCTION_DEFINITIONS = [
+    {
+        "name": "search_web",
+        "description": "جستجو در وب برای یافتن اطلاعات جدید یا به‌روز. از این تابع برای جستجوی موضوعات، اخبار و هر اطلاعات آنلاین استفاده کنید.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "عبارت جستجو. باید دقیق و مشخص باشد."
+                },
+                "is_news": {
+                    "type": "boolean",
+                    "description": "آیا جستجو برای اخبار است؟ اگر کاربر به دنبال خبر است، true بگذارید."
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "extract_content_from_url",
+        "description": "استخراج متن و اطلاعات از یک آدرس اینترنتی (URL). از این تابع برای خواندن محتوای وب‌سایت‌ها، مقالات، یا هر صفحه اینترنتی استفاده کنید.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "آدرس اینترنتی (URL) صفحه‌ای که باید محتوای آن استخراج شود."
+                }
+            },
+            "required": ["url"]
+        }
+    },
+    {
+        "name": "get_chat_history",
+        "description": "دریافت خلاصه تاریخچه گفتگو برای روزهای اخیر. از این تابع زمانی استفاده کنید که کاربر در مورد مکالمات گذشته سوال می‌پرسد.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "integer",
+                    "description": "تعداد روزهای گذشته برای خلاصه کردن تاریخچه گفتگو."
+                },
+                "chat_id": {
+                    "type": "integer",
+                    "description": "شناسه گفتگو برای دریافت تاریخچه."
+                }
+            },
+            "required": ["days"]
+        }
+    },
+    {
+        "name": "get_weather",
+        "description": "Get current weather information for a specific city",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "city": {
+                    "type": "string",
+                    "description": "The name of the city to get weather for, e.g. 'Tehran', 'Shiraz'"
+                },
+                "units": {
+                    "type": "string",
+                    "enum": ["metric", "imperial"],
+                    "description": "The unit system to use for temperature (metric: Celsius, imperial: Fahrenheit)",
+                    "default": "metric"
+                }
+            },
+            "required": ["city"]
+        }
+    },
+    {
+        "name": "get_top_news",
+        "description": "Retrieve top news from Persian and international news sources",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "enum": ["general", "politics", "business", "technology", "entertainment", "sports", "science", "health"],
+                    "description": "The category of news to retrieve"
+                },
+                "persian_only": {
+                    "type": "boolean",
+                    "description": "Whether to retrieve only Persian news or include international news as well"
+                }
+            }
+        }
+    },
+    {
+        "name": "get_trending_hashtags",
+        "description": "Retrieve trending hashtags and topics from X (Twitter)",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "region": {
+                    "type": "string",
+                    "enum": ["worldwide", "iran"],
+                    "description": "The region to get trends for (default: worldwide)",
+                    "default": "worldwide"
+                },
+                "count": {
+                    "type": "integer",
+                    "description": "Number of trending hashtags to retrieve (1-30)",
+                    "default": 20
+                }
+            }
+        }
+    }
+]
 
 def get_openai_function_definitions() -> List[Dict[str, Any]]:
     """
     Get the list of function definitions to be used with OpenAI API.
     """
-    return [
-        {
-            "name": "search_web",
-            "description": "Search the web for information or news",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "The search query"
-                    },
-                    "is_news": {
-                        "type": "boolean",
-                        "description": "Whether to search for news or general information"
-                    }
-                },
-                "required": ["query"]
-            }
-        },
-        {
-            "name": "extract_content_from_url",
-            "description": "Extract content from a URL",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "url": {
-                        "type": "string",
-                        "description": "The URL to extract content from"
-                    }
-                },
-                "required": ["url"]
-            }
-        },
-        {
-            "name": "get_chat_history",
-            "description": "Retrieve and summarize recent chat history",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "days": {
-                        "type": "integer",
-                        "description": "Number of days of history to retrieve (1-7)"
-                    },
-                    "chat_id": {
-                        "type": "integer",
-                        "description": "The chat ID to get history for"
-                    }
-                },
-                "required": ["days", "chat_id"]
-            }
-        },
-        {
-            "name": "get_weather",
-            "description": "Get current weather information for a specific city",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "city": {
-                        "type": "string",
-                        "description": "The name of the city to get weather for, e.g. 'Tehran', 'Shiraz'"
-                    },
-                    "units": {
-                        "type": "string",
-                        "enum": ["metric", "imperial"],
-                        "description": "The unit system to use for temperature (metric: Celsius, imperial: Fahrenheit)",
-                        "default": "metric"
-                    }
-                },
-                "required": ["city"]
-            }
-        },
-        {
-            "name": "get_top_news",
-            "description": "Retrieve top news from Persian and international news sources",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "category": {
-                        "type": "string",
-                        "enum": ["general", "politics", "business", "technology", "entertainment", "sports", "science", "health"],
-                        "description": "The category of news to retrieve"
-                    },
-                    "persian_only": {
-                        "type": "boolean",
-                        "description": "Whether to retrieve only Persian news or include international news as well"
-                    }
-                }
-            }
-        },
-        {
-            "name": "get_trending_hashtags",
-            "description": "Retrieve trending hashtags and topics from X (Twitter)",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "region": {
-                        "type": "string",
-                        "enum": ["worldwide", "iran"],
-                        "description": "The region to get trends for (default: worldwide)",
-                        "default": "worldwide"
-                    },
-                    "count": {
-                        "type": "integer",
-                        "description": "Number of trending hashtags to retrieve (1-30)",
-                        "default": 20
-                    }
-                }
-            }
-        }
-    ]
+    return FUNCTION_DEFINITIONS
 
 # Function implementations
 async def search_web(query: str, is_news: bool = False) -> Dict[str, Any]:
@@ -343,284 +333,237 @@ async def get_chat_history(days: int, chat_id: int) -> Dict[str, Any]:
 
 async def process_function_calls(response_message, chat_id: Optional[int] = None, user_id: Optional[int] = None) -> str:
     """
-    Process function calls from the OpenAI API response.
-    Compatible with both newer and older OpenAI API versions.
+    Process function calls from an OpenAI API response.
+    Executes any requested functions and returns the result for the bot to use in its response.
     
     Args:
-        response_message: The response message from the OpenAI API
-        chat_id: The chat ID (for context)
-        user_id: The user ID (for context)
-    
+        response_message: The message from OpenAI API containing possible function calls
+        chat_id: The chat ID for context-specific functions
+        user_id: The user ID for user-specific functions
+        
     Returns:
-        The processed response as a string
+        A string with the function results formatted for the user
     """
-    try:
-        message = response_message.choices[0].message
-        user_message_content = ""  # Default empty string to prevent null content
+    # Check if the message contains function calls
+    if not hasattr(response_message, 'function_call') and not hasattr(response_message, 'tool_calls'):
+        # No function calls to process, return empty string
+        return ""
         
-        # Handle different API versions
-        if is_new_openai:
-            # Newer OpenAI client (v1.0.0+) uses tool_calls
-            has_function_call = hasattr(message, 'tool_calls') and message.tool_calls
-            if not has_function_call:
-                return message.content or ""
-                
-            # Process the function call
-            tool_call = message.tool_calls[0]
-            function_name = tool_call.function.name
-            function_args = json.loads(tool_call.function.arguments)
-            tool_call_id = tool_call.id
+    # Process function_call (older API)
+    if hasattr(response_message, 'function_call') and response_message.function_call:
+        function_call = response_message.function_call
+        function_name = function_call.name
+        
+        # Parse function arguments
+        try:
+            function_args = json.loads(function_call.arguments)
+        except json.JSONDecodeError:
+            logger.error(f"Failed to parse function arguments: {function_call.arguments}")
+            return "خطا در پردازش درخواست. لطفاً دوباره تلاش کنید."
             
-            # Get message content (ensure it's not None)
-            user_message_content = message.content or ""
-        else:
-            # Older OpenAI client uses function_call
-            has_function_call = hasattr(message, 'function_call') and message.function_call
-            if not has_function_call:
-                return message.content or ""
-                
-            # Process the function call
-            function_name = message.function_call.name
-            function_args = json.loads(message.function_call.arguments)
-            tool_call_id = None  # Not used in the old API
-            
-            # Get message content (ensure it's not None)
-            user_message_content = message.content or ""
-        
-        if not has_function_call:
-            return message.content or ""
-        
-        # Log the function call
-        logger.info(f"Function call: {function_name} with arguments {function_args}")
-        
-        # Execute the appropriate function
+        # Execute the function
         result = await execute_function(function_name, function_args, chat_id, user_id)
         
-        # Get a more concise version of the result for the API call
-        api_result = get_api_safe_result(result)
-        
-        # Prepare formatted message for direct return if API call fails
-        formatted_message = result.get("formatted_message", "")
-        if not formatted_message and "error" in result:
-            formatted_message = f"متأسفانه در پردازش درخواست شما مشکلی پیش آمد: {result['error']}"
-        
-        # Follow-up with the AI using the function result
-        try:
-            if is_new_openai:
-                # New OpenAI client (v1.0.0+)
-                second_response = await openai_client.chat.completions.create(
-                    model="gpt-4-turbo",
-                    messages=[
-                        {"role": "user", "content": user_message_content},
-                        {"role": "assistant", "content": None, "tool_calls": message.tool_calls},
-                        {"role": "tool", "tool_call_id": tool_call_id, "content": json.dumps(api_result)}
-                    ],
-                    temperature=0.7,
-                    max_tokens=1000
-                )
-                return second_response.choices[0].message.content
-            else:
-                # Legacy OpenAI client (pre-1.0.0)
-                # For older client, we need to ensure all content fields are strings
-                second_response = await openai_client.ChatCompletion.acreate(
-                    model="gpt-4-turbo",
-                    messages=[
-                        {"role": "user", "content": user_message_content},
-                        {"role": "assistant", "content": "", "function_call": {"name": function_name, "arguments": json.dumps(function_args)}},
-                        {"role": "function", "name": function_name, "content": json.dumps(api_result)}
-                    ],
-                    temperature=0.7,
-                    max_tokens=1000
-                )
-                return second_response.choices[0].message.content
-        except Exception as api_error:
-            # If the API call fails, return the formatted message directly
-            logger.error(f"Error in follow-up API call: {api_error}", exc_info=True)
-            if formatted_message:
-                return formatted_message
-            else:
-                return f"اطلاعات درخواستی شما دریافت شد، اما در فرمت‌بندی پاسخ مشکلی پیش آمد.\n\nنتیجه: {json.dumps(api_result, ensure_ascii=False)}"
+        # Return the formatted message result
+        if "message" in result:
+            return result["message"]
+        elif "formatted_message" in result:  # For backward compatibility
+            return result["formatted_message"]
+        elif "error" in result:
+            return f"خطا: {result['error']}"
+        else:
+            # If no formatted message or error, create a basic message
+            return f"نتیجه عملیات '{function_name}' با موفقیت دریافت شد."
             
-    except Exception as e:
-        logger.error(f"Error processing function calls: {e}", exc_info=True)
-        return f"متأسفانه در پردازش درخواست شما مشکلی پیش آمد: {str(e)}"
+    # Process tool_calls (newer API)
+    elif hasattr(response_message, 'tool_calls') and response_message.tool_calls:
+        all_results = []
+        
+        for tool_call in response_message.tool_calls:
+            if tool_call.type == 'function':
+                function_name = tool_call.function.name
+                
+                # Parse function arguments
+                try:
+                    function_args = json.loads(tool_call.function.arguments)
+                except json.JSONDecodeError:
+                    logger.error(f"Failed to parse function arguments: {tool_call.function.arguments}")
+                    all_results.append("خطا در پردازش درخواست. لطفاً دوباره تلاش کنید.")
+                    continue
+                    
+                # Execute the function
+                result = await execute_function(function_name, function_args, chat_id, user_id)
+                
+                # Add the formatted result to our collection
+                if "message" in result:
+                    all_results.append(result["message"])
+                elif "formatted_message" in result:  # For backward compatibility
+                    all_results.append(result["formatted_message"])
+                elif "error" in result:
+                    all_results.append(f"خطا در اجرای '{function_name}': {result['error']}")
+                else:
+                    # If no formatted message or error, create a basic message
+                    all_results.append(f"نتیجه عملیات '{function_name}' با موفقیت دریافت شد.")
+        
+        # Join all results, separated by dividers if there are multiple
+        if len(all_results) > 1:
+            return "\n\n---\n\n".join(all_results)
+        elif all_results:
+            return all_results[0]
+        else:
+            return ""
+    
+    # No function calls detected
+    return ""
 
 async def execute_function(function_name: str, function_args: dict, chat_id: Optional[int] = None, user_id: Optional[int] = None) -> Dict[str, Any]:
-    """Execute the requested function with provided arguments"""
+    """
+    Execute the specified function with the given arguments.
+    Properly handles the web search and URL extraction functionality.
+    """
+    logger.info(f"Executing function: {function_name} with args: {function_args}")
+    
     try:
-        # Log the function execution
-        logger.info(f"Executing function: {function_name} with args: {function_args}")
-        
         if function_name == "search_web":
-            query = function_args.get("query", "")
+            # Validate we have a search query
+            query = function_args.get("query", "").strip()
             if not query:
                 return {
-                    "error": "نیاز به یک جستجوی معتبر است.",
-                    "formatted_message": "برای جستجو در وب، لطفاً یک عبارت جستجو وارد کنید."
+                    "error": "برای جستجو به یک عبارت معتبر نیاز است.",
+                    "message": "برای انجام جستجو لطفاً عبارت معتبری وارد کنید."
                 }
             
+            # Get is_news flag, default to False if not provided
             is_news = function_args.get("is_news", False)
-            result = await search_web(query, is_news)
             
-            # Ensure there's a formatted_message
-            if "formatted_message" not in result:
-                if "error" in result:
-                    result["formatted_message"] = f"متأسفانه در جستجوی '{query}' مشکلی پیش آمد: {result['error']}"
+            # Import the web_search module dynamically to avoid circular imports
+            import web_search
+            
+            # Call the web search function and return the results
+            try:
+                search_results = await web_search.search_web(query, is_news)
+                
+                # The search_web function now returns a dict with a formatted message
+                # Ensure we return it in the expected format
+                if "message" in search_results:
+                    return {
+                        "results": search_results.get("results", []),
+                        "message": search_results.get("message", "")
+                    }
                 else:
-                    result["formatted_message"] = f"نتایج جستجو برای '{query}' دریافت شد، اما نمایش آن با مشکل مواجه شد."
-            
-            return result
-            
+                    # Fall back to formatting the message ourselves if needed
+                    message = f"🔍 نتایج جستجو برای '{query}':\n\n"
+                    for i, result in enumerate(search_results.get("results", []), 1):
+                        title = result.get("title", "").strip()
+                        snippet = result.get("snippet", "").strip()
+                        link = result.get("link", "").strip()
+                        message += f"**{i}. {title}**\n{snippet}\n🔗 {link}\n\n"
+                    
+                    return {
+                        "results": search_results.get("results", []),
+                        "message": message
+                    }
+            except Exception as e:
+                logger.error(f"Error in search_web function: {e}")
+                return {
+                    "error": f"خطا در جستجو: {str(e)}",
+                    "message": "متأسفانه جستجو با مشکل مواجه شد. ممکن است اشکالی در اتصال به سرویس‌های جستجو وجود داشته باشد."
+                }
+                
         elif function_name == "extract_content_from_url":
-            url = function_args.get("url", "")
+            # Validate URL
+            url = function_args.get("url", "").strip()
             if not url:
                 return {
-                    "error": "نیاز به یک آدرس وب معتبر است.",
-                    "formatted_message": "برای استخراج محتوا، لطفاً یک آدرس وب معتبر وارد کنید."
+                    "error": "برای استخراج محتوا به یک آدرس اینترنتی معتبر نیاز است.",
+                    "message": "لطفاً یک آدرس اینترنتی (URL) معتبر وارد کنید."
                 }
-            
-            # Clean up the URL if needed
-            url = url.strip()
-            if not (url.startswith('http://') or url.startswith('https://')):
-                url = 'https://' + url
-            
-            result = await extract_content_from_url(url)
-            
-            # Ensure there's a formatted_message
-            if "formatted_message" not in result:
-                if "error" in result:
-                    result["formatted_message"] = f"متأسفانه در استخراج محتوا از {url} مشکلی پیش آمد: {result['error']}"
-                elif "content" in result:
-                    # Create a simple formatted message from the title and content
-                    title = result.get("title", "محتوای استخراج شده")
-                    content_preview = result["content"][:500] + "..." if len(result["content"]) > 500 else result["content"]
-                    result["formatted_message"] = f"**{title}**\n\n{content_preview}\n\n🔗 [مشاهده منبع]({url})"
-                else:
-                    result["formatted_message"] = f"محتوا از {url} استخراج شد، اما نمایش آن با مشکل مواجه شد."
-            
-            return result
-            
-        elif function_name == "get_chat_history":
-            days = function_args.get("days", 3)
-            chat_id_param = function_args.get("chat_id", chat_id)
-            return await get_chat_history(days, chat_id_param)
-            
-        elif function_name == "get_weather":
-            city = function_args.get("city")
-            units = function_args.get("units", "metric")
-            
-            # Initialize the weather service
-            weather_service = WeatherService()
-            weather_data = await weather_service.get_weather(city, units)
-            
-            if isinstance(weather_data, dict) and not weather_data.get("success", False):
+                
+            # Fix URL if it doesn't start with http:// or https://
+            if not url.startswith(("http://", "https://")):
+                url = "https://" + url
+                logger.info(f"Fixed URL format: {url}")
+                
+            # Import the web_extractor module dynamically
+            try:
+                import web_extractor
+                
+                # Extract content from the URL
+                content = await web_extractor.extract_content_from_url(url)
+                if not content:
+                    return {
+                        "error": "محتوایی از این آدرس استخراج نشد.",
+                        "message": f"من نتوانستم محتوایی از آدرس {url} استخراج کنم. ممکن است این آدرس قابل دسترسی نباشد یا محتوای قابل استخراجی نداشته باشد."
+                    }
+                
+                # Truncate content if it's too long for display
+                preview_content = content
+                if len(content) > 300:
+                    preview_content = content[:300] + "..."
+                
+                # Format the response message
+                message = f"📄 **محتوای استخراج‌شده از آدرس:**\n\n{preview_content}\n\n🔗 [مشاهده منبع اصلی]({url})"
+                
                 return {
-                    "error": weather_data.get("error", "خطای نامشخص"),
-                    "formatted_message": f"متأسفانه در دریافت اطلاعات آب و هوای {city} مشکلی پیش آمد."
+                    "content": content,
+                    "url": url,
+                    "message": message
                 }
-            
-            # Format weather response
-            temp_unit = "°C" if units == "metric" else "°F"
-            wind_unit = "m/s" if units == "metric" else "mph"
-            
-            return {
-                "city": weather_data.get("city", city),
-                "country": weather_data.get("country", ""),
-                "temperature": weather_data.get("temperature", "N/A"),
-                "description": weather_data.get("description", "N/A"),
-                "humidity": weather_data.get("humidity", "N/A"),
-                "wind_speed": weather_data.get("wind_speed", "N/A"),
-                "formatted_message": (
-                    f"🌤️ آب و هوای {weather_data.get('city', city)} ({weather_data.get('country', '')}):\n\n"
-                    f"🌡️ دما: {weather_data.get('temperature', 'N/A')}{temp_unit}\n"
-                    f"📝 وضعیت: {weather_data.get('description', 'N/A')}\n"
-                    f"💧 رطوبت: {weather_data.get('humidity', 'N/A')}%\n"
-                    f"💨 سرعت باد: {weather_data.get('wind_speed', 'N/A')} {wind_unit}"
-                )
-            }
-            
-        elif function_name == "get_top_news":
-            category = function_args.get("category", "general")
-            persian_only = function_args.get("persian_only", False)
-            result = await get_top_news(category, persian_only)
-            
-            # Format the result
-            if "error" in result:
-                result["formatted_message"] = f"متأسفانه در دریافت اخبار مشکلی پیش آمد: {result['error']}"
-            else:
-                # Create a nicely formatted news digest
-                persian_category_names = {
-                    "general": "عمومی", "politics": "سیاسی", "business": "اقتصادی",
-                    "technology": "فناوری", "entertainment": "سرگرمی", "sports": "ورزشی",
-                    "science": "علمی", "health": "سلامت"
+            except ImportError:
+                logger.error("web_extractor module not found")
+                return {
+                    "error": "ماژول استخراج محتوا پیدا نشد.",
+                    "message": "متأسفانه در حال حاضر امکان استخراج محتوا از آدرس‌های اینترنتی وجود ندارد."
+                }
+            except Exception as e:
+                logger.error(f"Error extracting content from URL: {e}")
+                return {
+                    "error": f"خطا در استخراج محتوا: {str(e)}",
+                    "message": f"متأسفانه نتوانستم محتوای آدرس {url} را استخراج کنم. ممکن است آدرس معتبر نباشد یا دسترسی به آن با مشکل مواجه باشد."
                 }
                 
-                category_persian = persian_category_names.get(category, "عمومی")
-                
-                formatted_message = f"📰 **اخبار {category_persian}** (به‌روز شده در {datetime.now().strftime('%H:%M')})\n\n"
-                
-                # Group news by source without limiting (as requested by user)
-                news_by_source = {}
-                for article in result["articles"]:
-                    source = article["source"]
-                    if source not in news_by_source:
-                        news_by_source[source] = []
-                    news_by_source[source].append(article)
-                
-                # Format each source's news with complete URLs
-                for source, articles in news_by_source.items():
-                    formatted_message += f"**{source}**:\n"
-                    for article in articles[:2]:  # Still limit to 2 headlines per source for readability
-                        title = article["title"]
-                        url = article.get("url", "")
-                        formatted_message += f"• {title}\n  {url}\n"
-                    formatted_message += "\n"
-                
-                result["formatted_message"] = formatted_message
+        elif function_name == "get_chat_history":
+            days = function_args.get("days", 1)
+            chat_id_param = function_args.get("chat_id", chat_id)
             
-            return result
-            
-        elif function_name == "get_trending_hashtags":
-            region = function_args.get("region", "worldwide")
-            count = function_args.get("count", 20)  # Use the requested count without limiting
-            result = await get_trending_hashtags(region, count)
-            
-            # Format the result
-            if "error" in result:
-                result["formatted_message"] = f"متأسفانه در دریافت هشتگ‌های داغ مشکلی پیش آمد: {result['error']}"
-            else:
-                # Create a nicely formatted trends digest
-                region_persian = {"worldwide": "جهانی", "iran": "ایران"}.get(region, "جهانی")
+            if not chat_id_param:
+                return {
+                    "error": "شناسه چت مشخص نشده است.",
+                    "message": "برای دریافت تاریخچه گفتگو، شناسه چت مورد نیاز است."
+                }
                 
-                formatted_message = f"🔥 **هشتگ‌های داغ در ایکس (توییتر) - {region_persian}**\n"
-                formatted_message += f"به‌روزرسانی: {datetime.now().strftime('%H:%M')}\n\n"
-                
-                # Add trending hashtags without limiting
-                if result.get("trends"):
-                    for i, trend in enumerate(result["trends"][:count], 1):
-                        name = trend['name']
-                        volume = trend.get('tweet_volume', 'N/A')
-                        url = trend.get('url', '')
-                        
-                        # Format tweet volume in Persian
-                        volume_text = "نامشخص" if volume == 'N/A' else f"{volume:,}".replace(',', '،') + " توییت"
-                        
-                        formatted_message += f"{i}. **{name}** - {volume_text}\n   {url}\n"
-                else:
-                    formatted_message += "متأسفانه، هشتگی یافت نشد."
-                
-                result["formatted_message"] = formatted_message
+            # Import the memory module dynamically
+            import memory
             
-            return result
-        else:
-            return {
-                "error": f"Function {function_name} not implemented",
-                "formatted_message": "متأسفانه این عملیات در حال حاضر پشتیبانی نمی‌شود."
-            }
-            
+            try:
+                history = await memory.get_chat_history_summary(chat_id_param, days)
+                return {
+                    "history": history,
+                    "message": history
+                }
+            except Exception as e:
+                logger.error(f"Error getting chat history: {e}")
+                return {
+                    "error": f"خطا در دریافت تاریخچه گفتگو: {str(e)}",
+                    "message": "متأسفانه نتوانستم تاریخچه گفتگو را دریافت کنم."
+                }
+        
+        # Handle other functions similarly
+        
+        # Return a default error for unimplemented functions
+        logger.warning(f"Function {function_name} not implemented")
+        return {
+            "error": f"عملکرد {function_name} پیاده‌سازی نشده است.",
+            "message": "متأسفانه این قابلیت در حال حاضر پشتیبانی نمی‌شود."
+        }
+        
     except Exception as e:
+        # Log the full stack trace for debugging
         logger.error(f"Error executing function {function_name}: {e}", exc_info=True)
-        return {"error": str(e), "formatted_message": f"خطا در اجرای درخواست: {str(e)}"}
+        return {
+            "error": f"خطا در اجرای تابع: {str(e)}",
+            "message": "متأسفانه در پردازش درخواست شما مشکلی پیش آمد. لطفاً مجدداً تلاش کنید."
+        }
 
 def get_api_safe_result(result: Dict[str, Any]) -> Dict[str, Any]:
     """

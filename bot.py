@@ -7,17 +7,19 @@ import asyncio
 import logging
 import base64
 import json
-from typing import List
+from typing import List, Optional
+from datetime import datetime
 
 # Third-party imports
 from telegram import Update
-from telegram.constants import ParseMode
+from telegram.constants import ParseMode, ChatAction
 from telegram.ext import (
     ApplicationBuilder, 
     ContextTypes, 
     MessageHandler, 
     CommandHandler,
-    filters
+    filters,
+    CallbackContext
 )
 from dotenv import load_dotenv
 
@@ -69,169 +71,233 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def generate_ai_response(
     prompt: str,
-    chat_id: int = None,
-    user_id: int = None,
-    memory_context: str = None,
-    user_profile_context: str = None,
-    media_data: bytes = None,
-    additional_images: List[bytes] = None
+    is_serious: bool = False,
+    chat_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+    memory_context: Optional[str] = None,
+    user_profile_context: Optional[str] = None,
+    media_data: Optional[bytes] = None,
+    additional_images: Optional[List[bytes]] = None
 ) -> str:
-    """Generate an AI response using OpenAI's API."""
-    try:
-        # Check if we have memory context, if not, generate it
-        if memory_context is None and chat_id is not None:
-            memory_context = await memory.get_relevant_memory(chat_id, prompt)
-
-        # Check if we have user profile context, if not, generate it
-        if user_profile_context is None and chat_id is not None and user_id is not None:
-            user_profile_context = memory.get_user_profile_context(chat_id, user_id)
-
-        # Create the system message that initializes the bot's behavior
-        system_message = (
-            "شما یک ربات گپ تلگرام ایرانی به نام فیرتیق (firtigh)هستید که به گروه‌های فارسی زبان کمک می‌کند. "
-            "هر زمان که یکی از کاربران شما را منشن کند یا به پیام شما پاسخ دهد، شما برای او یک پاسخ با لحن "
-            ".ساده و دوستانه می‌نویسید"
-            "اگر با لحن شوخی یا محاوره ای با شما مکالمه شد شما هم می‌تواند با لحن شوخ مانند طرف مقابل صحبت کنید"
-            
-            "\n\nدر پاسخ‌های خود:"
-            "\n1. همیشه به فارسی پاسخ دهید."       
-            "\n2. لحن شما باید ساده و صمیمی باشد - شما در یک گروه دوستانه صحبت می‌کنید."
-            "\n3. مستقیماً با کاربران صحبت کنید، نگویید «من پاسخ می‌دهم...» یا «در پاسخ به سوال شما...» - فقط پاسخ دهید."
-            "\n4. از فرمت‌بندی استفاده کنید - مارک‌داون، بولد، ایتالیک - برای پاسخ‌های بهتر."
-            "\n5. از ایموجی‌ها به طور هوشمندانه استفاده کنید تا پاسخ‌ها دوستانه‌تر به نظر برسند."
-            "\n6. اگر به منابع خاصی اشاره می‌کنید، حتماً نام منبع و لینک را ذکر کنید."
-            
-            # Persian writing instructions
-            "\n\nراهنمای نگارش فارسی:"
-            "\n1. فاصله‌گذاری صحیح: بین کلمات فاصله بگذارید، اما بین کلمات و علائم نگارشی مثل نقطه و ویرگول فاصله نگذارید."
-            "\n2. «گیومه» را به شکل صحیح فارسی استفاده کنید."
-            "\n3. از اعداد فارسی استفاده کنید: ۰۱۲۳۴۵۶۷۸۹ به جای 0123456789."
-            "\n4. نیم‌فاصله را در ترکیبات مثل «می‌شود» یا «گفته‌اند» رعایت کنید."
-            "\n5. از علامت‌های نگارشی فارسی استفاده کنید مثل «،» به جای «,»."
-        )
-
-        # Prepare messages for the API call
-        messages = [{"role": "system", "content": system_message}]
+    """
+    Generate a response using the OpenAI API, with function calling support.
+    
+    Args:
+        prompt: The user's message
+        is_serious: Whether this is a serious conversation requiring formal tone
+        chat_id: The chat ID for context-specific functions
+        user_id: The user ID for user-specific functions
+        memory_context: Context from memory for the conversation
+        user_profile_context: User profile context
+        media_data: Binary data of media (image, etc.)
+        additional_images: List of additional image data to include in the context
         
+    Returns:
+        The generated response
+    """
+    try:
+        # Get memory context if not provided
+        if not memory_context and chat_id:
+            memory_context = await memory.get_relevant_memory(chat_id, prompt, limit=5)
+            
+        # Get user profile context if not provided
+        if not user_profile_context and chat_id and user_id:
+            user_profile_context = memory.get_user_profile_context(chat_id, user_id)
+        
+        # Determine if we need the vision model based on media data
+        use_vision = bool(media_data) or bool(additional_images)
+        
+        # Prepare the system message that initializes the bot's behavior
+        system_message = f"""
+تو یک ربات هوشمند فارسی‌زبان هستی که می‌توانی با کاربران به شکل طبیعی و دوستانه صحبت کنی.
+
+دستورالعمل‌های مهم:
+- *همیشه به فارسی و با لحن شخصی پاسخ بده* و مستقیماً با کاربر صحبت کن.
+- از فرمت‌بندی متن (مثل **تاکید**، *ایتالیک*) و ایموجی‌های مناسب استفاده کن.
+- به سوالات با صداقت پاسخ بده و اگر چیزی را نمی‌دانی، صادقانه بگو.
+- در مکالمات، هویت خود را حفظ کن و به‌یاد داشته باش که یک ربات هوشمند هستی.
+- شخصیت دوستانه، خوش‌برخورد و کمی شوخ‌طبع خود را حفظ کن.
+- وقتی به منابع یا مطالب خارجی اشاره می‌کنی، لینک مستقیم و کامل آنها را در پاسخت بگنجان.
+- اسامی انگلیسی را به فارسی ترجمه کن (مثل "نیویورک" به جای "New York").
+- اعداد را به فارسی بنویس (مثل "۱۲۳" به جای "123").
+- از فاصله‌گذاری درست کلمات فارسی استفاده کن.
+- نقطه‌گذاری فارسی را رعایت کن (ویرگول، نقطه، علامت سوال، etc.).
+- به دانش‌هایی که داری متکی باش، اما برای اطلاعات به‌روز، جستجوی وب، و استخراج محتوا از لینک‌ها، از توابع مربوطه استفاده کن.
+"""
+
         # Add memory context if available
         if memory_context:
-            messages.append({"role": "system", "content": f"Memory context: {memory_context}"})
-        
-        # Add user profile if available
+            system_message += f"\n\nاطلاعات حافظه:\n{memory_context}"
+            
+        # Add user profile context if available
         if user_profile_context:
-            messages.append({"role": "system", "content": f"User profile: {user_profile_context}"})
-        
-        # Add the current user message
-        if media_data or additional_images:
-            # Handle vision model request with images
-            content = [{"type": "text", "text": prompt}]
-            
-            # Add primary media if available
-            if media_data:
-                content.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{media_data.decode('utf-8')}",
-                        "detail": "high"
-                    }
-                })
-            
-            # Add any additional images
-            if additional_images:
-                for img_data in additional_images:
+            system_message += f"\n\nپروفایل کاربر:\n{user_profile_context}"
+
+        # Prepare the messages array
+        messages = [
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": prompt}
+        ]
+
+        # Handle content based on whether we need vision
+        if use_vision:
+            # Use the vision model for image analysis
+            try:
+                content = []
+                
+                # Add the text part
+                content.append({"type": "text", "text": prompt})
+                
+                # Add the main image if available
+                if media_data:
                     content.append({
                         "type": "image_url",
                         "image_url": {
-                            "url": f"data:image/jpeg;base64,{img_data.decode('utf-8')}",
-                            "detail": "high"
+                            "url": f"data:image/jpeg;base64,{base64.b64encode(media_data).decode('utf-8')}"
                         }
                     })
-            
-            messages.append({"role": "user", "content": content})
-            
-            # Use the vision model
-            try:
+                
+                # Add additional images if available
+                if additional_images:
+                    for img_data in additional_images:
+                        content.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64.b64encode(img_data).decode('utf-8')}"
+                            }
+                        })
+                
+                # Use the GPT-4 Vision model with appropriate client version
                 if openai_functions.is_new_openai:
-                    # New OpenAI client format (v1.0.0+)
-                    response = await openai_functions.openai_client.chat.completions.create(
-                        model=OPENAI_MODEL_VISION,
-                        messages=messages,
+                    response = openai_functions.openai_client.chat.completions.create(
+                        model="gpt-4-vision-preview",
+                        messages=[
+                            {"role": "system", "content": system_message},
+                            {"role": "user", "content": content}
+                        ],
                         max_tokens=1000,
-                        temperature=0.7,
+                        temperature=0.7
                     )
                 else:
-                    # Legacy OpenAI client format
                     response = await openai_functions.openai_client.ChatCompletion.acreate(
-                        model=OPENAI_MODEL_VISION,
-                        messages=messages,
+                        model="gpt-4-vision-preview",
+                        messages=[
+                            {"role": "system", "content": system_message},
+                            {"role": "user", "content": content}
+                        ],
                         max_tokens=1000,
-                        temperature=0.7,
+                        temperature=0.7
                     )
                 
-                return response.choices[0].message.content
+                if openai_functions.is_new_openai:
+                    return response.choices[0].message.content
+                else:
+                    return response.choices[0].message.content
+                
             except Exception as e:
-                logger.error(f"Error with vision model: {e}", exc_info=True)
-                # Fallback to basic response
-                return "متأسفانه در پردازش تصویر شما مشکلی پیش آمد. لطفاً دوباره تلاش کنید یا توضیحات بیشتری درباره تصویر ارائه دهید."
+                logger.error(f"Error in vision API call: {e}", exc_info=True)
+                return "متأسفانه در پردازش تصویر مشکلی پیش آمد. لطفاً دوباره تلاش کنید."
+                
         else:
-            # Regular text request with function calling
-            messages.append({"role": "user", "content": prompt})
-            
-            # Get function definitions
-            from openai_functions import get_openai_function_definitions, process_function_calls
-            
+            # Use the standard model with function calling
             try:
-                # Send request to OpenAI with appropriate format for the client version
+                # Import the function definitions
+                from openai_functions import FUNCTION_DEFINITIONS, process_function_calls
+                
+                # Make the API call with function definitions based on client version
                 if openai_functions.is_new_openai:
-                    # New OpenAI client (v1.0.0+)
-                    response = await openai_functions.openai_client.chat.completions.create(
-                        model=OPENAI_MODEL_DEFAULT,
+                    response = openai_functions.openai_client.chat.completions.create(
+                        model="gpt-4-turbo",
                         messages=messages,
-                        tools=[{"type": "function", "function": func} for func in get_openai_function_definitions()],
-                        tool_choice="auto",
-                        temperature=0.7,
-                        max_tokens=1000
+                        functions=FUNCTION_DEFINITIONS,
+                        function_call="auto",
+                        max_tokens=1000,
+                        temperature=0.7
                     )
                 else:
-                    # Legacy OpenAI client (pre-1.0.0)
                     response = await openai_functions.openai_client.ChatCompletion.acreate(
-                        model=OPENAI_MODEL_DEFAULT,
+                        model="gpt-4-turbo",
                         messages=messages,
-                        functions=get_openai_function_definitions(),
+                        functions=FUNCTION_DEFINITIONS,
                         function_call="auto",
-                        temperature=0.7,
-                        max_tokens=1000
+                        max_tokens=1000,
+                        temperature=0.7
                     )
                 
-                # Process function calls if any
-                return await process_function_calls(response, chat_id=chat_id, user_id=user_id)
+                if openai_functions.is_new_openai:
+                    response_message = response.choices[0].message
+                else:
+                    response_message = response.choices[0].message
+                
+                # Check if the response includes a function call
+                has_function_call = (
+                    hasattr(response_message, 'function_call') and response_message.function_call or
+                    hasattr(response_message, 'tool_calls') and response_message.tool_calls
+                )
+                
+                if has_function_call:
+                    # Process the function calls
+                    function_result = await process_function_calls(response_message, chat_id, user_id)
+                    
+                    if function_result:
+                        # Add the function result to our conversation and call the API again
+                        messages.append({
+                            "role": "assistant",
+                            "content": None,
+                            "function_call": response_message.function_call if hasattr(response_message, 'function_call') else None,
+                            "tool_calls": response_message.tool_calls if hasattr(response_message, 'tool_calls') else None
+                        })
+                        
+                        # Add the function result as a new message
+                        if hasattr(response_message, 'function_call'):
+                            messages.append({
+                                "role": "function",
+                                "name": response_message.function_call.name,
+                                "content": function_result
+                            })
+                        else:
+                            # For tool_calls format
+                            for tool_call in response_message.tool_calls:
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call.id,
+                                    "content": function_result
+                                })
+                        
+                        # Call the API again with the function result
+                        if openai_functions.is_new_openai:
+                            second_response = openai_functions.openai_client.chat.completions.create(
+                                model="gpt-4-turbo",
+                                messages=messages,
+                                max_tokens=1000,
+                                temperature=0.7
+                            )
+                        else:
+                            second_response = await openai_functions.openai_client.ChatCompletion.acreate(
+                                model="gpt-4-turbo",
+                                messages=messages,
+                                max_tokens=1000,
+                                temperature=0.7
+                            )
+                        
+                        if openai_functions.is_new_openai:
+                            return second_response.choices[0].message.content
+                        else:
+                            return second_response.choices[0].message.content
+                    
+                    # If function execution failed but returned a message
+                    return function_result if function_result else "متأسفانه در پردازش درخواست شما مشکلی پیش آمد."
+                
+                # If no function call, just return the response content
+                return response_message.content
+                
             except Exception as e:
-                logger.error(f"Error with function calling: {e}", exc_info=True)
-                # Try basic completion without functions as fallback
-                try:
-                    if openai_functions.is_new_openai:
-                        basic_response = await openai_functions.openai_client.chat.completions.create(
-                            model=OPENAI_MODEL_DEFAULT,
-                            messages=messages,
-                            temperature=0.7,
-                            max_tokens=1000
-                        )
-                    else:
-                        basic_response = await openai_functions.openai_client.ChatCompletion.acreate(
-                            model=OPENAI_MODEL_DEFAULT,
-                            messages=messages,
-                            temperature=0.7,
-                            max_tokens=1000
-                        )
-                    return basic_response.choices[0].message.content
-                except Exception as fallback_error:
-                    logger.error(f"Fallback error: {fallback_error}", exc_info=True)
-                    return "متأسفانه در پردازش پیام شما مشکلی پیش آمد. لطفاً دوباره تلاش کنید."
-    
+                logger.error(f"Error in OpenAI API call: {e}", exc_info=True)
+                return "متأسفانه در پردازش درخواست شما مشکلی پیش آمد. لطفاً دوباره تلاش کنید."
+                
     except Exception as e:
-        logger.error(f"Error generating response: {e}", exc_info=True)
-        # Provide a fallback response in Persian
-        return "متأسفانه در پردازش پیام شما مشکلی پیش آمد. لطفاً دوباره تلاش کنید."
+        logger.error(f"Error generating AI response: {e}", exc_info=True)
+        return "متأسفانه در پردازش درخواست شما مشکلی پیش آمد. لطفاً دوباره تلاش کنید."
 
  
 async def extract_media_info(message, context):
@@ -290,38 +356,57 @@ async def extract_media_info(message, context):
     
     return (media_type, media_description, media_data)
 
-async def get_conversation_context(update: Update, context: ContextTypes.DEFAULT_TYPE, depth=3):
+async def get_conversation_context(update: Update, context: ContextTypes.DEFAULT_TYPE, depth=5):
     """
-    Extract conversation context from reply chains, including images.
+    Get the conversation context from the message and its reply chain.
+    Handles multiple levels of replies to capture the full conversation thread.
     
     Args:
-        update: The current update
-        context: The telegram context for file downloads
-        depth: How many messages back in the reply chain to collect (default: 3)
-    
+        update: The update object
+        context: The context object
+        depth: Maximum depth of the reply chain to follow
+        
     Returns:
-        Tuple of (context_text, media_data_list)
+        Tuple of (context_text, media_data_list, has_context)
     """
     context_messages = []
     media_data_list = []
+    has_context = False
+    
+    # Start with the current message
     current_message = update.message
     current_depth = 0
+    processed_message_ids = set()  # Track processed messages to avoid duplicates
     
-    # Check if this is a direct reply to a message
-    if current_message and current_message.reply_to_message:
-        replied_to = current_message.reply_to_message
+    # Process the main message chain first
+    main_chain_messages = []
+    reply_chain = []
+    
+    # Function to process a message and its media
+    async def process_message(message, sender_name):
+        nonlocal media_data_list
         
-        # Get sender info if available
-        sender_name = "someone"
-        if replied_to.from_user:
-            if replied_to.from_user.username:
-                sender_name = f"@{replied_to.from_user.username}"
-            elif replied_to.from_user.first_name:
-                sender_name = replied_to.from_user.first_name
+        # Skip if we've already processed this message
+        if message.message_id in processed_message_ids:
+            return None
+            
+        processed_message_ids.add(message.message_id)
         
         # Extract media information
-        media_type, media_description, media_data = await extract_media_info(replied_to, context)
+        media_type, media_description, media_data = await extract_media_info(message, context)
         
+        # Construct message content
+        message_content = ""
+        if message.text:
+            message_content += message.text
+        
+        # Add media description if available
+        if media_description:
+            if message_content:
+                message_content += f" {media_description}"
+            else:
+                message_content = media_description
+                
         # If media data was extracted, add it to our list
         if media_data:
             media_data_list.append({
@@ -329,73 +414,91 @@ async def get_conversation_context(update: Update, context: ContextTypes.DEFAULT
                 "data": media_data,
                 "sender": sender_name
             })
-        
-        # Capture message content with rich context
-        message_content = ""
-        
-        # Text content
-        if replied_to.text:
-            message_content += replied_to.text
-        
-        # Add media description if available
-        if media_description:
-            message_content += f" {media_description}"
             
-        # Add the message to our context list if it has content
+        # Return formatted message if it has content
         if message_content:
-            context_messages.append(f"{sender_name}: {message_content}")
+            return f"{sender_name}: {message_content}"
+        return None
     
-        # Process the reply chain up to specified depth
-        while current_message and current_message.reply_to_message and current_depth < depth:
-            replied_to = current_message.reply_to_message
-            
-            # Get sender info if available
-            sender_name = "someone"
-            if replied_to.from_user:
-                if replied_to.from_user.username:
-                    sender_name = f"@{replied_to.from_user.username}"
-                elif replied_to.from_user.first_name:
-                    sender_name = replied_to.from_user.first_name
-            
-            # Extract media information from this message too
-            media_type, media_description, media_data = await extract_media_info(replied_to, context)
-            
-            # If media data was extracted, add it to our list
-            if media_data:
-                media_data_list.append({
-                    "type": media_type,
-                    "data": media_data,
-                    "sender": sender_name
-                })
-            
-            # Add text content to context messages
-            message_content = ""
-            if replied_to.text:
-                message_content += replied_to.text
-            
-            # Add media description if available
-            if media_description:
-                message_content += f" {media_description}"
+    # Process the current message first
+    sender_name = "User"
+    if current_message.from_user:
+        if current_message.from_user.username:
+            sender_name = f"@{current_message.from_user.username}"
+        elif current_message.from_user.first_name:
+            sender_name = current_message.from_user.first_name
+    
+    # Process the main message
+    msg_text = await process_message(current_message, sender_name)
+    if msg_text:
+        main_chain_messages.append(msg_text)
+    
+    # Process the entire reply chain
+    while current_message and current_message.reply_to_message and current_depth < depth:
+        current_depth += 1
+        replied_to = current_message.reply_to_message
+        
+        # Get sender info for the replied-to message
+        sender_name = "someone"
+        if replied_to.from_user:
+            if replied_to.from_user.username:
+                sender_name = f"@{replied_to.from_user.username}"
+            elif replied_to.from_user.first_name:
+                sender_name = replied_to.from_user.first_name
+        
+        # Process this message in the reply chain
+        msg_text = await process_message(replied_to, sender_name)
+        if msg_text:
+            reply_chain.append(msg_text)
+        
+        # Move up the chain
+        current_message = replied_to
+    
+    # Now get broader context from recent messages in the chat (not just the reply chain)
+    if update.message.chat.type != 'private':
+        # Use bot data to access recent messages
+        chat_id = update.message.chat_id
+        if not context.bot_data.get('recent_messages'):
+            context.bot_data['recent_messages'] = {}
+        
+        if not context.bot_data['recent_messages'].get(chat_id):
+            context.bot_data['recent_messages'][chat_id] = []
+        
+        recent_messages = context.bot_data['recent_messages'][chat_id]
+        
+        # Add any recent messages that aren't in the reply chain and have the bot mentioned
+        # or are from the bot (to provide additional context)
+        for msg in recent_messages[-10:]:  # Last 10 messages for context
+            # Skip messages already processed in the reply chain
+            if msg.get('message_id') in processed_message_ids:
+                continue
                 
-            # Add the message to our context list if it has content
-            if message_content:
-                context_messages.append(f"{sender_name}: {message_content}")
+            sender = msg.get('sender', 'someone')
+            text = msg.get('text', '')
             
-            # Move up the chain to the previous message
-            current_message = replied_to
-            current_depth += 1
+            # Only include messages that mention the bot or are from the bot
+            bot_username = context.bot.username
+            if (f"@{bot_username}" in text or BOT_NAME in text or 
+                sender == f"@{bot_username}" or 'is_bot_message' in msg):
+                context_messages.append(f"{sender}: {text}")
+                has_context = True
     
-    # Reverse the list so it's in chronological order
-    context_messages.reverse()
-    media_data_list.reverse()
+    # If we have a reply chain, add it in chronological order to the context
+    if reply_chain:
+        # Add the replies in chronological order (oldest first)
+        context_messages.extend(reversed(reply_chain))
+        has_context = True
     
-    # If we have context messages, format them
+    # Add the current message at the end
+    context_messages.extend(main_chain_messages)
+    
+    # Prepare the final context text
     if context_messages:
-        context_text = "سابقه گفتگو:\n" + "\n".join(context_messages) + "\n\n"
-        logger.info(f"Found conversation context: {context_text}")
-        return context_text, media_data_list
+        context_text = "سابقه گفتگو:\n" + "\n".join(context_messages)
+    else:
+        context_text = ""
     
-    return "", []
+    return context_text, media_data_list, has_context
 
 async def download_telegram_file(file_id, context):
     """Download a Telegram file and convert it to base64."""
@@ -477,222 +580,124 @@ def to_persian_numbers(text: str) -> str:
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle incoming messages."""
-    # Skip processing if there's no message
-    if not update.message:
+    # Skip updates without messages
+    if not update.message or not update.message.chat:
         return
-
-    message_text = update.message.text or ""
-    chat_id = update.effective_chat.id if update.effective_chat else None
+        
+    # Extract basic message info
+    message = update.message
+    chat_id = message.chat_id
+    user_id = message.from_user.id if message.from_user else None
+    message_text = message.text or ""
     
-    # Store message in database for history tracking
-    if update.message.from_user and chat_id:
-        # Only store group messages (not private chats)
-        if update.effective_chat.type in ["group", "supergroup"]:
-            # Prepare message data
-            message_data = {
-                "message_id": update.message.message_id,
-                "chat_id": chat_id,
-                "sender_id": update.message.from_user.id,
-                "sender_name": update.message.from_user.username or update.message.from_user.first_name,
-                "text": message_text,
-                "date": time.time(),  # Current timestamp
-                "has_photo": bool(update.message.photo),
-                "has_animation": bool(update.message.animation),
-                "has_sticker": bool(update.message.sticker),
-                "has_document": bool(update.message.document)
-            }
-
-            # Check for images in the message
-            if update.message.photo:
-                # Get the highest resolution photo
-                photo = update.message.photo[-1]
-                file = await context.bot.get_file(photo.file_id)
-
-                # Store image information in the message data
-                image_data = {
-                    "file_id": photo.file_id,
-                    "file_unique_id": photo.file_unique_id,
-                    "width": photo.width,
-                    "height": photo.height,
-                    "file_path": file.file_path
-                }
-
-                # Add image data to the message being stored
-                message_data["has_image"] = True
-                message_data["image_data"] = image_data
-
-            # Add sticker info if present
-            if update.message.sticker:
-                message_data["sticker_emoji"] = update.message.sticker.emoji
-
-            # Add document info if present
-            if update.message.document:
-                message_data["document_name"] = update.message.document.file_name
-
-            # Save to database
-            database.save_message(message_data)
-
-            # Process for memory and user profiles
-            # We use asyncio.create_task to process in the background without delaying response
-            asyncio.create_task(memory.process_message_for_memory(message_data))
-
-            # Check for name corrections
-            if message_text:
-                name_correction = memory.analyze_for_name_correction(message_text)
-                if name_correction:
-                    logger.info(f"Detected name correction: {name_correction['wrong']} -> {name_correction['correct']}")
-                    memory.store_name_correction(name_correction["wrong"], name_correction["correct"])
+    # Store this message in the recent messages list for context
+    if not context.bot_data.get('recent_messages'):
+        context.bot_data['recent_messages'] = {}
+        
+    if not context.bot_data['recent_messages'].get(chat_id):
+        context.bot_data['recent_messages'][chat_id] = []
+        
+    # Add the message to the recent messages list
+    context.bot_data['recent_messages'][chat_id].append({
+        'message_id': message.message_id,
+        'sender': f"@{message.from_user.username}" if message.from_user and message.from_user.username else 
+                  message.from_user.first_name if message.from_user else "someone",
+        'text': message_text,
+        'timestamp': datetime.now().timestamp()
+    })
     
-    bot_username = context.bot.username.lower() if context.bot.username else "firtigh"
-    bot_user_id = context.bot.id
-
-    # Different ways the bot might be mentioned in a group
-    mentions = [
-        f"{BOT_NAME}",            # Persian name (فیرتیق)
-        f"{BOT_NAME.lower()}",    # Lowercase Persian name
-        "firtigh",                # English transliteration
-        f"@{bot_username}",       # Standard @username mention
-        "@firtigh",               # Default username mention
-    ]
-
-    # Check if any form of mention is in the message (case insensitive)
-    is_mentioned = message_text and any(mention.lower() in message_text.lower() for mention in mentions)
-
-    # Check if this is a reply to the bot's message
-    is_reply_to_bot = False
-    if update.message.reply_to_message and update.message.reply_to_message.from_user:
-        is_reply_to_bot = update.message.reply_to_message.from_user.id == bot_user_id
-        if is_reply_to_bot:
-            logger.info(f"User replied to bot's message: {message_text}")
-
-    # Process if the bot is mentioned or if this is a reply to the bot's message
-    if is_mentioned or is_reply_to_bot:
-        # Log the interaction
+    # Limit the size of the recent messages list
+    if len(context.bot_data['recent_messages'][chat_id]) > 50:  # Keep the last 50 messages
+        context.bot_data['recent_messages'][chat_id] = context.bot_data['recent_messages'][chat_id][-50:]
+        
+    # Check if the bot was mentioned or replied to
+    bot_username = context.bot.username
+    is_mentioned = f"@{bot_username}" in message_text or BOT_NAME in message_text
+    is_reply_to_bot = message.reply_to_message and message.reply_to_message.from_user and message.reply_to_message.from_user.username == bot_username
+    is_private_chat = message.chat.type == 'private'
+    
+    # Process the message if the bot was mentioned, replied to, or in a private chat
+    if is_mentioned or is_reply_to_bot or is_private_chat:
+        # Log which condition triggered the bot
         if is_mentioned:
             logger.info(f"Bot mentioned in message: {message_text}")
-
-        # Check if this is an instruction to the bot
-        is_instruction = False
-        if message_text:
-            instruction_indicators = [
-                "یاد بگیر", "به خاطر بسپار", "به یاد داشته باش", "فراموش نکن", "یادت باشه",
-                "بدان که", "این رو یاد بگیر", "از این به بعد", "از الان به بعد", "دستور میدم",
-                "پس از این", "این طوری رفتار کن", "باید", "نباید", "مجبوری", "وظیفه داری"
-            ]
-            is_instruction = any(indicator in message_text.lower() for indicator in instruction_indicators)
-
-            if is_instruction:
-                logger.info(f"Detected instruction: {message_text}")
-                # Store the instruction in a new database table or as a special memory item
-
-                instruction_data = {
-                    "instruction": message_text,
-                    "timestamp": time.time(),
-                    "user_id": update.message.from_user.id if update.message.from_user else None,
-                    "username": update.message.from_user.username or update.message.from_user.first_name if update.message.from_user else "Unknown"
-                }
-
-                # Create a memory item for this instruction
-                memory_item = {
-                    "timestamp": time.time(),
-                    "message_id": update.message.message_id,
-                    "message_text": message_text,
-                    "is_memorable": True,  # Force memorability
-                    "topics": ["دستورالعمل", "رفتار بات", "قواعد"],
-                    "key_points": [f"دستور: {message_text[:100]}..."],
-                    "sentiment": "neutral",
-                    "sender_id": update.message.from_user.id if update.message.from_user else None,
-                    "sender_name": update.message.from_user.username or update.message.from_user.first_name if update.message.from_user else "Unknown"
-                }
-
-                # Store this instruction in group memory
-                if chat_id:
-                    await memory.update_group_memory(chat_id, memory_item)
-
-        # Get the query - if it's a mention, remove the mention text
-        query = message_text
-        if is_mentioned and message_text:
-            # More carefully remove the mention text
-            query = message_text
-            for mention in mentions:
-                # Look for the mention with word boundaries to avoid partial word matches
-                pattern = r'\b' + re.escape(mention) + r'\b'
-                query = re.sub(pattern, '', query, flags=re.IGNORECASE).strip()
+        elif is_reply_to_bot:
+            logger.info(f"User replied to bot's message: {message_text}")
+        else:
+            logger.info(f"Message in private chat: {message_text}")
+            
+        # Extract conversation context (including reply chain and recent mentions)
+        context_text, media_data_list, has_context = await get_conversation_context(update, context)
+        if has_context:
+            logger.info(f"Found conversation context: {context_text[:100]}...")
+            
+        # Tell the user we're processing their message
+        await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
         
-        # If there's no query after processing, ask for more information
-        if not query and not (update.message.photo or update.message.animation):
-            await update.message.reply_text("من رو صدا زدی، ولی سوالی نپرسیدی. چطور می‌تونم کمکت کنم؟ 🤔")
-            return
-
-        # Get sender info for the bot to address the user appropriately
-        user_id = None
-        if update.message.from_user:
-            user_id = update.message.from_user.id
-
-        # Get conversation context from reply chain
-        conversation_context, media_data_list = await get_conversation_context(update, context)
-        
-        # Initialize variables for handling media
+        # Process any attached media
         media_data = None
-        additional_images = None
+        additional_images = []
         
-        # Handle photos - add usage limits
-        if update.message.photo:
-            try:
-                # Get the highest resolution photo
-                photo = update.message.photo[-1]
-                
-                # Download the photo
-                media_data = await download_telegram_file(photo.file_id, context)
-                if media_data:
-                    logger.info(f"Downloaded image from message: {len(media_data)} bytes")
-            except Exception as e:
-                logger.error(f"Error downloading image: {e}")
-
-        # Check if any media is available in the conversation context
-        if media_data_list and len(media_data_list) > 0:
-            additional_images = media_data_list
-
-        # Send typing indicator
-        await update.message.reply_chat_action("typing")
-       
-        # Get response from AI
-        ai_response = await generate_ai_response(
-            prompt=query,
+        # Extract media directly from the current message
+        media_type, media_description, extracted_media_data = await extract_media_info(message, context)
+        if extracted_media_data:
+            media_data = extracted_media_data
+            
+            # Add any media description to the message text
+            if media_description and not media_description in message_text:
+                if message_text:
+                    message_text += f" {media_description}"
+                else:
+                    message_text = media_description
+        
+        # Add any additional images from the conversation context
+        if media_data_list:
+            for item in media_data_list:
+                if item["data"] and item["data"] != media_data:  # Don't duplicate the main image
+                    additional_images.append(item["data"])
+        
+        # Clean up the prompt to remove bot mentions
+        prompt = message_text.replace(f"@{bot_username}", "").replace(BOT_NAME, "").strip()
+        if not prompt:
+            prompt = "سلام!"  # Default prompt if only the bot's name was mentioned
+            
+        # Get memory context
+        memory_context = await memory.get_relevant_memory(chat_id, prompt)
+        if memory_context:
+            memory.add_to_memory(chat_id, prompt, user_id, message.from_user.first_name if message.from_user else "User")
+            
+        # Get user profile context
+        user_profile_context = memory.get_user_profile_context(chat_id, user_id) if user_id else None
+            
+        # Generate the response
+        response = await generate_ai_response(
+            prompt=prompt,
             chat_id=chat_id,
             user_id=user_id,
+            memory_context=memory_context,
+            user_profile_context=user_profile_context,
             media_data=media_data,
-            additional_images=additional_images
+            additional_images=additional_images if additional_images else None
         )
         
-        if not ai_response:
-            ai_response = "متأسفم، در حال حاضر نمی‌توانم پاسخی تولید کنم. 😔"
+        # Send the response
+        sent_message = await context.bot.send_message(
+            chat_id=chat_id, 
+            text=response,
+            parse_mode=ParseMode.MARKDOWN
+        )
         
-        # Check if the response contains links (markdown format)
-        contains_links = re.search(r'\[([^\]]+)\]\(([^)]+)\)', ai_response) is not None
-        is_news_query = False  # No need to detect news queries anymore, handled by function calling
+        # Store the bot's response in recent messages with a special flag
+        context.bot_data['recent_messages'][chat_id].append({
+            'message_id': sent_message.message_id,
+            'sender': f"@{bot_username}",
+            'text': response,
+            'timestamp': datetime.now().timestamp(),
+            'is_bot_message': True
+        })
         
-        # Special handling for responses with links to ensure links are clickable
-        if contains_links:
-            try:
-                # Use standard Markdown for responses with links to ensure links work
-                await update.message.reply_text(ai_response, parse_mode=ParseMode.MARKDOWN)
-            except Exception as e:
-                logger.error(f"Error sending response with links using Markdown: {e}")
-                # Try with HTML parsing instead which might handle links better
-                try:
-                    # Convert markdown links to HTML links first (before other conversions)
-                    html_response = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', ai_response)
-                    await update.message.reply_text(html_response, parse_mode=ParseMode.HTML)
-                except Exception as e2:
-                    logger.error(f"Error sending response with HTML links: {e2}")
-                    # Fall back to plain text
-                    await update.message.reply_text(ai_response)
-        else:
-            # For responses without links, just send as plain text
-            await update.message.reply_text(ai_response)
-
-
+        # Add the bot's response to memory
+        memory.add_to_memory(chat_id, response, context.bot.id, bot_username, message_type="bot_response")
 
 def main() -> None:
     """Start the bot."""
