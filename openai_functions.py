@@ -281,32 +281,39 @@ async def process_function_calls(response_message, chat_id: Optional[int] = None
     """
     try:
         message = response_message.choices[0].message
+        user_message_content = ""  # Default empty string to prevent null content
         
         # Handle different API versions
         if is_new_openai:
             # Newer OpenAI client (v1.0.0+) uses tool_calls
             has_function_call = hasattr(message, 'tool_calls') and message.tool_calls
             if not has_function_call:
-                return message.content
+                return message.content or ""
                 
             # Process the function call
             tool_call = message.tool_calls[0]
             function_name = tool_call.function.name
             function_args = json.loads(tool_call.function.arguments)
             tool_call_id = tool_call.id
+            
+            # Get message content (ensure it's not None)
+            user_message_content = message.content or ""
         else:
             # Older OpenAI client uses function_call
             has_function_call = hasattr(message, 'function_call') and message.function_call
             if not has_function_call:
-                return message.content
+                return message.content or ""
                 
             # Process the function call
             function_name = message.function_call.name
             function_args = json.loads(message.function_call.arguments)
             tool_call_id = None  # Not used in the old API
+            
+            # Get message content (ensure it's not None)
+            user_message_content = message.content or ""
         
         if not has_function_call:
-            return message.content
+            return message.content or ""
         
         # Log the function call
         logger.info(f"Function call: {function_name} with arguments {function_args}")
@@ -317,33 +324,47 @@ async def process_function_calls(response_message, chat_id: Optional[int] = None
         # Get a more concise version of the result for the API call
         api_result = get_api_safe_result(result)
         
+        # Prepare formatted message for direct return if API call fails
+        formatted_message = result.get("formatted_message", "")
+        if not formatted_message and "error" in result:
+            formatted_message = f"متأسفانه در پردازش درخواست شما مشکلی پیش آمد: {result['error']}"
+        
         # Follow-up with the AI using the function result
-        if is_new_openai:
-            # New OpenAI client (v1.0.0+)
-            second_response = await openai_client.chat.completions.create(
-                model="gpt-4-turbo",
-                messages=[
-                    {"role": "user", "content": message.content},
-                    {"role": "assistant", "content": None, "tool_calls": message.tool_calls},
-                    {"role": "tool", "tool_call_id": tool_call_id, "content": json.dumps(api_result)}
-                ],
-                temperature=0.7,
-                max_tokens=1000
-            )
-            return second_response.choices[0].message.content
-        else:
-            # Legacy OpenAI client (pre-1.0.0)
-            second_response = await openai_client.ChatCompletion.acreate(
-                model="gpt-4-turbo",
-                messages=[
-                    {"role": "user", "content": message.content},
-                    {"role": "assistant", "content": None, "function_call": {"name": function_name, "arguments": json.dumps(function_args)}},
-                    {"role": "function", "name": function_name, "content": json.dumps(api_result)}
-                ],
-                temperature=0.7,
-                max_tokens=1000
-            )
-            return second_response.choices[0].message.content
+        try:
+            if is_new_openai:
+                # New OpenAI client (v1.0.0+)
+                second_response = await openai_client.chat.completions.create(
+                    model="gpt-4-turbo",
+                    messages=[
+                        {"role": "user", "content": user_message_content},
+                        {"role": "assistant", "content": None, "tool_calls": message.tool_calls},
+                        {"role": "tool", "tool_call_id": tool_call_id, "content": json.dumps(api_result)}
+                    ],
+                    temperature=0.7,
+                    max_tokens=1000
+                )
+                return second_response.choices[0].message.content
+            else:
+                # Legacy OpenAI client (pre-1.0.0)
+                # For older client, we need to ensure all content fields are strings
+                second_response = await openai_client.ChatCompletion.acreate(
+                    model="gpt-4-turbo",
+                    messages=[
+                        {"role": "user", "content": user_message_content},
+                        {"role": "assistant", "content": "", "function_call": {"name": function_name, "arguments": json.dumps(function_args)}},
+                        {"role": "function", "name": function_name, "content": json.dumps(api_result)}
+                    ],
+                    temperature=0.7,
+                    max_tokens=1000
+                )
+                return second_response.choices[0].message.content
+        except Exception as api_error:
+            # If the API call fails, return the formatted message directly
+            logger.error(f"Error in follow-up API call: {api_error}", exc_info=True)
+            if formatted_message:
+                return formatted_message
+            else:
+                return f"اطلاعات درخواستی شما دریافت شد، اما در فرمت‌بندی پاسخ مشکلی پیش آمد.\n\nنتیجه: {json.dumps(api_result, ensure_ascii=False)}"
             
     except Exception as e:
         logger.error(f"Error processing function calls: {e}", exc_info=True)
@@ -568,25 +589,19 @@ async def get_top_news(category: str = "general", persian_only: bool = False) ->
                 }
             },
             {
-                "name": "Alarabya",
-                "url": "https://english.alarabiya.net/",
-                "rss": "https://english.alarabiya.net/feed/rss2/en.xml",
+                "name": "العربیه فارسی",
+                "url": "https://farsi.alarabiya.net/",
+                "rss": "https://farsi.alarabiya.net/fa/feed/rss/rss2.0.xml",
                 "category_mapping": {
-                    "general": "https://english.alarabiya.net/feed/rss2/en.xml",
-                    "politics": "https://english.alarabiya.net/feed/rss2/en/News.xml",
-                    "business": "https://english.alarabiya.net/feed/rss2/en/business.xml",
+                    "general": "https://farsi.alarabiya.net/fa/feed/rss/rss2.0.xml"
                 }
             },
             {
                 "name": "صدای آمریکا",
                 "url": "https://www.voanews.com/persian",
-                "rss": "https://ir.voanews.com/api/zuiypl-vomx-tpeggtm",
+                "rss": "https://www.voanews.com/api/zyqztevyyr",
                 "category_mapping": {
-                    "general": "https://www.voanews.com/api/zyqztevyyr",
-                    "politics": "https://ir.voanews.com/api/zkup_l-vomx-tpejiyyan/rss.xml",
-                    "business": "https://ir.voanews.com/api/zpgpml-vomx-tpe_myp",
-                    "technology": "https://ir.voanews.com/api/zyupol-vomx-tpetiyo",
-                    "sports": "https://ir.voanews.com/api/zmuptl-vomx-tpeyiyr"
+                    "general": "https://www.voanews.com/api/zyqztevyyr"
                 }
             },
             {
@@ -729,13 +744,32 @@ async def fetch_rss_feed(session, source, rss_url):
         List of news articles
     """
     try:
-        async with session.get(rss_url, timeout=10) as response:
+        # Add user-agent header to mimic a browser and avoid blocks
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "Accept": "application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8"
+        }
+        
+        # Increase timeout to 15 seconds for slow RSS feeds
+        async with session.get(rss_url, headers=headers, timeout=15) as response:
             if response.status != 200:
                 logger.warning(f"Failed to fetch RSS feed from {source['name']}: {response.status}")
                 return []
-            
+                
             content = await response.text()
+            
+            # Check if content is valid before parsing
+            if not content or len(content) < 50:  # Arbitrary minimum valid XML size
+                logger.warning(f"Empty or too small RSS content from {source['name']}")
+                return []
+                
             return parse_rss_content(content, source)
+    except asyncio.TimeoutError:
+        logger.error(f"Timeout fetching RSS feed from {source['name']}")
+        return []
+    except aiohttp.ClientError as e:
+        logger.error(f"Client error fetching RSS feed from {source['name']}: {e}")
+        return []
     except Exception as e:
         logger.error(f"Error fetching RSS feed from {source['name']}: {e}")
         return []
@@ -757,99 +791,191 @@ def parse_rss_content(content, source):
         from datetime import datetime
         import email.utils
         
-        # Parse XML
-        root = ET.fromstring(content)
+        # Try to parse XML - handle potential errors
+        try:
+            root = ET.fromstring(content)
+        except ET.ParseError as e:
+            logger.error(f"XML parsing error from {source['name']}: {e}")
+            # Try to clean content before parsing again
+            clean_content = re.sub(r'[^\x20-\x7E\x0A\x0D\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]+', '', content)
+            try:
+                root = ET.fromstring(clean_content)
+            except ET.ParseError:
+                logger.error(f"Failed to parse XML even after cleaning from {source['name']}")
+                return []
         
         # Handle different RSS formats
         articles = []
         
-        # Check if it's RSS 2.0
-        if root.tag == 'rss':
-            channel = root.find('channel')
-            if channel is not None:
-                for item in channel.findall('item'):
-                    title_elem = item.find('title')
-                    link_elem = item.find('link')
-                    desc_elem = item.find('description')
-                    date_elem = item.find('pubDate')
-                    
-                    if title_elem is not None and title_elem.text:
-                        title = title_elem.text.strip()
-                        link = link_elem.text.strip() if link_elem is not None and link_elem.text else ""
-                        description = desc_elem.text.strip() if desc_elem is not None and desc_elem.text else ""
-                        
-                        # Clean description (remove HTML tags)
-                        if description:
-                            description = re.sub(r'<[^>]+>', '', description)
-                        
-                        # Parse date
-                        published_at = ""
-                        if date_elem is not None and date_elem.text:
-                            try:
-                                # Parse RFC 822 date format
-                                parsed_date = email.utils.parsedate_to_datetime(date_elem.text)
-                                published_at = parsed_date.isoformat()
-                            except Exception:
-                                # If parsing fails, keep the original string
-                                published_at = date_elem.text
-                        
-                        articles.append({
-                            "title": title,
-                            "source": source["name"],
-                            "url": link,
-                            "published_at": published_at,
-                            "summary": description[:200] + "..." if description and len(description) > 200 else description
-                        })
-        
-        # Check if it's Atom
-        elif root.tag.endswith('feed'):
-            for item in root.findall('.//{http://www.w3.org/2005/Atom}entry'):
-                title_elem = item.find('.//{http://www.w3.org/2005/Atom}title')
-                link_elem = item.find('.//{http://www.w3.org/2005/Atom}link')
-                content_elem = item.find('.//{http://www.w3.org/2005/Atom}content')
-                summary_elem = item.find('.//{http://www.w3.org/2005/Atom}summary')
-                date_elem = item.find('.//{http://www.w3.org/2005/Atom}published')
-                
-                if title_elem is not None:
-                    title = title_elem.text.strip() if title_elem.text else ""
-                    
-                    # Get link from href attribute
-                    link = ""
-                    if link_elem is not None:
-                        link = link_elem.get('href', '')
-                    
-                    # Get content or summary
-                    description = ""
-                    if content_elem is not None and content_elem.text:
-                        description = content_elem.text.strip()
-                    elif summary_elem is not None and summary_elem.text:
-                        description = summary_elem.text.strip()
-                    
-                    # Clean description (remove HTML tags)
-                    if description:
-                        description = re.sub(r'<[^>]+>', '', description)
-                    
-                    # Parse date
-                    published_at = ""
-                    if date_elem is not None and date_elem.text:
+        # RSS 2.0 format
+        try:
+            if root.tag == 'rss':
+                channel = root.find('channel')
+                if channel is not None:
+                    for item in channel.findall('item'):
                         try:
-                            # ISO format
-                            parsed_date = datetime.fromisoformat(date_elem.text.replace('Z', '+00:00'))
-                            published_at = parsed_date.isoformat()
-                        except Exception:
-                            published_at = date_elem.text
-                    
-                    articles.append({
-                        "title": title,
-                        "source": source["name"],
-                        "url": link,
-                        "published_at": published_at,
-                        "summary": description[:200] + "..." if description and len(description) > 200 else description
-                    })
+                            title_elem = item.find('title')
+                            link_elem = item.find('link')
+                            desc_elem = item.find('description')
+                            date_elem = item.find('pubDate')
+                            
+                            if title_elem is not None and title_elem.text:
+                                title = title_elem.text.strip()
+                                link = link_elem.text.strip() if link_elem is not None and link_elem.text else ""
+                                description = desc_elem.text.strip() if desc_elem is not None and desc_elem.text else ""
+                                
+                                # Clean description (remove HTML tags)
+                                if description:
+                                    description = re.sub(r'<[^>]+>', '', description)
+                                
+                                # Parse date
+                                published_at = ""
+                                if date_elem is not None and date_elem.text:
+                                    try:
+                                        # Parse RFC 822 date format
+                                        parsed_date = email.utils.parsedate_to_datetime(date_elem.text)
+                                        published_at = parsed_date.isoformat()
+                                    except Exception:
+                                        # If parsing fails, keep the original string
+                                        published_at = date_elem.text
+                                
+                                articles.append({
+                                    "title": title,
+                                    "source": source["name"],
+                                    "url": link,
+                                    "published_at": published_at,
+                                    "summary": description[:200] + "..." if description and len(description) > 200 else description
+                                })
+                        except Exception as item_error:
+                            logger.error(f"Error parsing item from {source['name']}: {item_error}")
+                            continue  # Skip this item but continue with others
+        except Exception as rss_error:
+            logger.error(f"Error parsing RSS format from {source['name']}: {rss_error}")
+        
+        # Atom format
+        try:
+            if root.tag.endswith('feed') or 'atom' in root.tag.lower():
+                namespaces = {'atom': 'http://www.w3.org/2005/Atom'}
+                
+                # Try with and without namespace
+                entries = root.findall('.//{http://www.w3.org/2005/Atom}entry') or root.findall('.//entry')
+                
+                for item in entries:
+                    try:
+                        # Try both with and without namespace
+                        title_elem = (
+                            item.find('.//{http://www.w3.org/2005/Atom}title') or 
+                            item.find('.//title')
+                        )
+                        link_elem = (
+                            item.find('.//{http://www.w3.org/2005/Atom}link') or 
+                            item.find('.//link')
+                        )
+                        content_elem = (
+                            item.find('.//{http://www.w3.org/2005/Atom}content') or 
+                            item.find('.//content')
+                        )
+                        summary_elem = (
+                            item.find('.//{http://www.w3.org/2005/Atom}summary') or 
+                            item.find('.//summary')
+                        )
+                        date_elem = (
+                            item.find('.//{http://www.w3.org/2005/Atom}published') or 
+                            item.find('.//{http://www.w3.org/2005/Atom}updated') or
+                            item.find('.//published') or
+                            item.find('.//updated')
+                        )
+                        
+                        if title_elem is not None:
+                            title = title_elem.text.strip() if title_elem.text else ""
+                            
+                            # Get link from href attribute or text content
+                            link = ""
+                            if link_elem is not None:
+                                link = link_elem.get('href', '') or link_elem.text or ""
+                            
+                            # Get content or summary
+                            description = ""
+                            if content_elem is not None and content_elem.text:
+                                description = content_elem.text.strip()
+                            elif summary_elem is not None and summary_elem.text:
+                                description = summary_elem.text.strip()
+                            
+                            # Clean description (remove HTML tags)
+                            if description:
+                                description = re.sub(r'<[^>]+>', '', description)
+                            
+                            # Parse date
+                            published_at = ""
+                            if date_elem is not None and date_elem.text:
+                                try:
+                                    # Try ISO format first
+                                    parsed_date = datetime.fromisoformat(date_elem.text.replace('Z', '+00:00'))
+                                    published_at = parsed_date.isoformat()
+                                except Exception:
+                                    # If parsing fails, keep the original string
+                                    published_at = date_elem.text
+                            
+                            articles.append({
+                                "title": title,
+                                "source": source["name"],
+                                "url": link,
+                                "published_at": published_at,
+                                "summary": description[:200] + "..." if description and len(description) > 200 else description
+                            })
+                    except Exception as item_error:
+                        logger.error(f"Error parsing Atom item from {source['name']}: {item_error}")
+                        continue  # Skip this item but continue with others
+        except Exception as atom_error:
+            logger.error(f"Error parsing Atom format from {source['name']}: {atom_error}")
+        
+        # If we found articles, return them
+        if articles:
+            return articles
+            
+        # Fall back to a more generic approach if both formats failed
+        try:
+            # Look for any elements with 'title' and 'link'
+            for item in root.findall('.//*'):
+                if item.tag.endswith('item') or item.tag.endswith('entry'):
+                    try:
+                        # Find child elements with common tags
+                        title = None
+                        link = None
+                        description = None
+                        
+                        for child in item:
+                            if child.tag.endswith('title') and child.text:
+                                title = child.text.strip()
+                            elif child.tag.endswith('link') and child.text:
+                                link = child.text.strip()
+                            elif child.tag.endswith('description') and child.text:
+                                description = child.text.strip()
+                            elif child.tag.endswith('content') and child.text:
+                                description = child.text.strip()
+                        
+                        if title and (link or description):
+                            # Clean description (remove HTML tags)
+                            if description:
+                                description = re.sub(r'<[^>]+>', '', description)
+                                
+                            articles.append({
+                                "title": title,
+                                "source": source["name"],
+                                "url": link or "",
+                                "published_at": "",
+                                "summary": description[:200] + "..." if description and len(description) > 200 else (description or "")
+                            })
+                    except Exception as fallback_error:
+                        logger.error(f"Error in fallback parsing from {source['name']}: {fallback_error}")
+                        continue
+        except Exception as generic_error:
+            logger.error(f"Error in generic XML parsing from {source['name']}: {generic_error}")
         
         return articles
+        
     except Exception as e:
-        logger.error(f"Error parsing RSS content from {source['name']}: {e}")
+        logger.error(f"Error parsing RSS content from {source['name']}: {e}", exc_info=True)
         return []
 
 async def get_trending_hashtags(region: str = "worldwide", count: int = 20) -> Dict[str, Any]:
