@@ -10,7 +10,6 @@ import json
 from typing import List
 
 # Third-party imports
-import openai
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -37,7 +36,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Set up OpenAI API key
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# Remove direct OpenAI import to avoid conflicts
+# The openai_functions module will handle the API key setup
+# openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Constants for enhanced memory
 MAX_MEMORY_MESSAGES = 1000  # Maximum number of messages to remember
@@ -47,8 +48,8 @@ BOT_DESCRIPTION = "یک بات هوشمند برای کمک به گروه‌ها
 OPENAI_MODEL_DEFAULT = config.OPENAI_MODEL_DEFAULT
 OPENAI_MODEL_VISION = config.OPENAI_MODEL_VISION
 
-# Configure OpenAI
-from openai_functions import openai_client
+# Import from openai_functions after setting up compatibility
+import openai_functions
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /start is issued."""
@@ -148,50 +149,43 @@ async def generate_ai_response(
             
             messages.append({"role": "user", "content": content})
             
-            # Use the vision model - handle different OpenAI library versions
+            # Use the vision model
             try:
-                # Check if we're using the new OpenAI client (v1.0.0+) or the old one
-                if hasattr(openai_functions, "is_new_openai") and openai_functions.is_new_openai:
-                    # New client style (v1.0.0+)
+                if openai_functions.is_new_openai:
+                    # New OpenAI client format (v1.0.0+)
                     response = await openai_functions.openai_client.chat.completions.create(
-                        model="gpt-4-vision-preview",
+                        model=OPENAI_MODEL_VISION,
                         messages=messages,
                         max_tokens=1000,
                         temperature=0.7,
                     )
                 else:
-                    # Legacy client style (pre-1.0.0)
+                    # Legacy OpenAI client format
                     response = await openai_functions.openai_client.ChatCompletion.acreate(
-                        model="gpt-4-vision-preview",
+                        model=OPENAI_MODEL_VISION,
                         messages=messages,
                         max_tokens=1000,
                         temperature=0.7,
                     )
                 
                 return response.choices[0].message.content
-            except AttributeError:
-                # Fallback in case of unexpected client structure
-                logger.error("Error with OpenAI client version detection, trying legacy method")
-                response = await openai_functions.openai_client.ChatCompletion.acreate(
-                    model="gpt-4-vision-preview",
-                    messages=messages,
-                    max_tokens=1000,
-                    temperature=0.7,
-                )
-                return response.choices[0].message.content
+            except Exception as e:
+                logger.error(f"Error with vision model: {e}", exc_info=True)
+                # Fallback to basic response
+                return "متأسفانه در پردازش تصویر شما مشکلی پیش آمد. لطفاً دوباره تلاش کنید یا توضیحات بیشتری درباره تصویر ارائه دهید."
         else:
             # Regular text request with function calling
             messages.append({"role": "user", "content": prompt})
             
-            # Get function definitions from openai_functions module
+            # Get function definitions
             from openai_functions import get_openai_function_definitions, process_function_calls
             
             try:
-                # Handle different OpenAI versions
-                if hasattr(openai_functions, "is_new_openai") and openai_functions.is_new_openai:
-                    # New client style (v1.0.0+)
+                # Send request to OpenAI with appropriate format for the client version
+                if openai_functions.is_new_openai:
+                    # New OpenAI client (v1.0.0+)
                     response = await openai_functions.openai_client.chat.completions.create(
-                        model="gpt-4-turbo",
+                        model=OPENAI_MODEL_DEFAULT,
                         messages=messages,
                         tools=[{"type": "function", "function": func} for func in get_openai_function_definitions()],
                         tool_choice="auto",
@@ -199,9 +193,9 @@ async def generate_ai_response(
                         max_tokens=1000
                     )
                 else:
-                    # Legacy client style (pre-1.0.0)
+                    # Legacy OpenAI client (pre-1.0.0)
                     response = await openai_functions.openai_client.ChatCompletion.acreate(
-                        model="gpt-4-turbo",
+                        model=OPENAI_MODEL_DEFAULT,
                         messages=messages,
                         functions=get_openai_function_definitions(),
                         function_call="auto",
@@ -209,29 +203,33 @@ async def generate_ai_response(
                         max_tokens=1000
                     )
                 
-                # Process any function calls
+                # Process function calls if any
                 return await process_function_calls(response, chat_id=chat_id, user_id=user_id)
             except Exception as e:
-                logger.error(f"Error with function calling: {e}")
-                # Fallback to basic completion without functions
-                if hasattr(openai_functions, "is_new_openai") and openai_functions.is_new_openai:
-                    basic_response = await openai_functions.openai_client.chat.completions.create(
-                        model="gpt-4-turbo",
-                        messages=messages,
-                        temperature=0.7,
-                        max_tokens=1000
-                    )
-                else:
-                    basic_response = await openai_functions.openai_client.ChatCompletion.acreate(
-                        model="gpt-4-turbo",
-                        messages=messages,
-                        temperature=0.7,
-                        max_tokens=1000
-                    )
-                return basic_response.choices[0].message.content
+                logger.error(f"Error with function calling: {e}", exc_info=True)
+                # Try basic completion without functions as fallback
+                try:
+                    if openai_functions.is_new_openai:
+                        basic_response = await openai_functions.openai_client.chat.completions.create(
+                            model=OPENAI_MODEL_DEFAULT,
+                            messages=messages,
+                            temperature=0.7,
+                            max_tokens=1000
+                        )
+                    else:
+                        basic_response = await openai_functions.openai_client.ChatCompletion.acreate(
+                            model=OPENAI_MODEL_DEFAULT,
+                            messages=messages,
+                            temperature=0.7,
+                            max_tokens=1000
+                        )
+                    return basic_response.choices[0].message.content
+                except Exception as fallback_error:
+                    logger.error(f"Fallback error: {fallback_error}", exc_info=True)
+                    return "متأسفانه در پردازش پیام شما مشکلی پیش آمد. لطفاً دوباره تلاش کنید."
     
     except Exception as e:
-        logging.error(f"Error generating response: {e}", exc_info=True)
+        logger.error(f"Error generating response: {e}", exc_info=True)
         # Provide a fallback response in Persian
         return "متأسفانه در پردازش پیام شما مشکلی پیش آمد. لطفاً دوباره تلاش کنید."
 

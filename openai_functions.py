@@ -5,28 +5,40 @@ from typing import Dict, List, Any, Optional, Tuple
 import database
 import web_search
 import web_extractor
-from openai import OpenAI
 import config
 from datetime import datetime, timedelta
 import aiohttp
 from information_services import WeatherService
+import os
 
-# Fix OpenAI import to work with both older and newer versions
+# Set up logging
+logger = logging.getLogger(__name__)
+
+# Initialize OpenAI client with version compatibility
 try:
-    # Try newer version (1.0.0+) import style
-    from openai import OpenAI
-    openai_client = OpenAI(api_key=config.OPENAI_API_KEY)
-    is_new_openai = True
-    logging.info("Using OpenAI API v1.0.0+ client")
-except ImportError:
-    # Fall back to older version import style
+    # First try to detect which version is installed
+    import openai
+    
+    # Check if this is the newer OpenAI client (1.0.0+)
+    if hasattr(openai, "OpenAI"):
+        from openai import OpenAI
+        openai_client = OpenAI(api_key=config.OPENAI_API_KEY)
+        is_new_openai = True
+        logger.info("Using OpenAI API v1.0.0+ client")
+    else:
+        # This is the older OpenAI client (pre-1.0.0)
+        openai.api_key = config.OPENAI_API_KEY
+        openai_client = openai
+        is_new_openai = False
+        logger.info("Using OpenAI API legacy client (pre-1.0.0)")
+except ImportError as e:
+    logger.error(f"Error importing OpenAI: {str(e)}")
+    # Fallback to older client as a last resort
     import openai
     openai.api_key = config.OPENAI_API_KEY
     openai_client = openai
     is_new_openai = False
-    logging.info("Using OpenAI API legacy client")
-
-logger = logging.getLogger(__name__)
+    logger.info("Failed to import newer OpenAI client, falling back to legacy client")
 
 def get_openai_function_definitions() -> List[Dict[str, Any]]:
     """
@@ -257,6 +269,7 @@ async def get_chat_history(days: int, chat_id: int) -> Dict[str, Any]:
 async def process_function_calls(response_message, chat_id: Optional[int] = None, user_id: Optional[int] = None) -> str:
     """
     Process function calls from the OpenAI API response.
+    Compatible with both newer and older OpenAI API versions.
     
     Args:
         response_message: The response message from the OpenAI API
@@ -269,17 +282,34 @@ async def process_function_calls(response_message, chat_id: Optional[int] = None
     try:
         message = response_message.choices[0].message
         
-        # If there's no function call, just return the message content
-        if not (hasattr(message, 'tool_calls') and message.tool_calls):
+        # Handle different API versions
+        if is_new_openai:
+            # Newer OpenAI client (v1.0.0+) uses tool_calls
+            has_function_call = hasattr(message, 'tool_calls') and message.tool_calls
+            if not has_function_call:
+                return message.content
+                
+            # Process the function call
+            tool_call = message.tool_calls[0]
+            function_name = tool_call.function.name
+            function_args = json.loads(tool_call.function.arguments)
+            tool_call_id = tool_call.id
+        else:
+            # Older OpenAI client uses function_call
+            has_function_call = hasattr(message, 'function_call') and message.function_call
+            if not has_function_call:
+                return message.content
+                
+            # Process the function call
+            function_name = message.function_call.name
+            function_args = json.loads(message.function_call.arguments)
+            tool_call_id = None  # Not used in the old API
+        
+        if not has_function_call:
             return message.content
         
-        # Process the function call
-        tool_call = message.tool_calls[0]
-        function_name = tool_call.function.name
-        function_args = json.loads(tool_call.function.arguments)
-        
         # Log the function call
-        logging.info(f"Function call: {function_name} with arguments {function_args}")
+        logger.info(f"Function call: {function_name} with arguments {function_args}")
         
         # Execute the appropriate function
         result = await execute_function(function_name, function_args, chat_id, user_id)
@@ -287,7 +317,7 @@ async def process_function_calls(response_message, chat_id: Optional[int] = None
         # Get a more concise version of the result for the API call
         api_result = get_api_safe_result(result)
         
-        # Follow-up with the AI using the function result - handle different OpenAI versions
+        # Follow-up with the AI using the function result
         if is_new_openai:
             # New OpenAI client (v1.0.0+)
             second_response = await openai_client.chat.completions.create(
@@ -295,7 +325,7 @@ async def process_function_calls(response_message, chat_id: Optional[int] = None
                 messages=[
                     {"role": "user", "content": message.content},
                     {"role": "assistant", "content": None, "tool_calls": message.tool_calls},
-                    {"role": "tool", "tool_call_id": tool_call.id, "content": json.dumps(api_result)}
+                    {"role": "tool", "tool_call_id": tool_call_id, "content": json.dumps(api_result)}
                 ],
                 temperature=0.7,
                 max_tokens=1000
@@ -303,21 +333,20 @@ async def process_function_calls(response_message, chat_id: Optional[int] = None
             return second_response.choices[0].message.content
         else:
             # Legacy OpenAI client (pre-1.0.0)
-            function_name = function_name  # Get function name from tool_call
             second_response = await openai_client.ChatCompletion.acreate(
                 model="gpt-4-turbo",
                 messages=[
                     {"role": "user", "content": message.content},
-                    {"role": "assistant", "content": None, "function_call": {"name": function_name, "arguments": function_args}},
+                    {"role": "assistant", "content": None, "function_call": {"name": function_name, "arguments": json.dumps(function_args)}},
                     {"role": "function", "name": function_name, "content": json.dumps(api_result)}
                 ],
                 temperature=0.7,
                 max_tokens=1000
             )
             return second_response.choices[0].message.content
-        
+            
     except Exception as e:
-        logging.error(f"Error processing function calls: {e}")
+        logger.error(f"Error processing function calls: {e}", exc_info=True)
         return f"متأسفانه در پردازش درخواست شما مشکلی پیش آمد: {str(e)}"
 
 async def execute_function(function_name: str, function_args: dict, chat_id: Optional[int] = None, user_id: Optional[int] = None) -> Dict[str, Any]:
