@@ -81,22 +81,69 @@ FUNCTION_DEFINITIONS = [
     },
     {
         "name": "get_weather",
-        "description": "Get current weather information for a specific city",
+        "description": "دریافت اطلاعات آب و هوای فعلی برای یک شهر مشخص. از این تابع برای دریافت وضعیت آب و هوا، دما، رطوبت و سرعت باد استفاده کنید.",
         "parameters": {
             "type": "object",
             "properties": {
                 "city": {
                     "type": "string",
-                    "description": "The name of the city to get weather for, e.g. 'Tehran', 'Shiraz'"
+                    "description": "نام شهر برای دریافت آب و هوا، مثل 'تهران'، 'شیراز'، 'مشهد'"
                 },
                 "units": {
                     "type": "string",
                     "enum": ["metric", "imperial"],
-                    "description": "The unit system to use for temperature (metric: Celsius, imperial: Fahrenheit)",
+                    "description": "واحد اندازه‌گیری دما (metric: سلسیوس، imperial: فارنهایت)",
                     "default": "metric"
                 }
             },
             "required": ["city"]
+        }
+    },
+    {
+        "name": "geocode",
+        "description": "جستجوی مکان‌ها با نام یا آدرس و دریافت مختصات جغرافیایی. از این تابع برای پیدا کردن موقعیت جغرافیایی مکان‌ها استفاده کنید.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "نام مکان یا آدرس برای جستجو، مثل 'برج میلاد تهران' یا 'میدان آزادی'"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "حداکثر تعداد نتایج",
+                    "default": 5
+                },
+                "language": {
+                    "type": "string",
+                    "description": "زبان ترجیحی برای نتایج (fa: فارسی، en: انگلیسی)",
+                    "default": "fa"
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "reverse_geocode",
+        "description": "تبدیل مختصات جغرافیایی به آدرس. از این تابع برای دریافت آدرس یک موقعیت جغرافیایی با طول و عرض جغرافیایی استفاده کنید.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "lat": {
+                    "type": "number",
+                    "description": "عرض جغرافیایی (latitude)"
+                },
+                "lon": {
+                    "type": "number",
+                    "description": "طول جغرافیایی (longitude)"
+                },
+                "language": {
+                    "type": "string",
+                    "description": "زبان ترجیحی برای نتایج (fa: فارسی، en: انگلیسی)",
+                    "default": "fa"
+                }
+            },
+            "required": ["lat", "lon"]
         }
     },
     {
@@ -506,6 +553,188 @@ async def execute_function(function_name: str, function_args: dict, chat_id: Opt
                 return {
                     "error": f"خطا در دریافت تاریخچه گفتگو: {str(e)}",
                     "message": "متأسفانه نتوانستم تاریخچه گفتگو را دریافت کنم."
+                }
+        
+        elif function_name == "get_weather":
+            # Validate city parameter
+            city = function_args.get("city", "").strip()
+            if not city:
+                return {
+                    "error": "برای دریافت آب و هوا، یک شهر معتبر مورد نیاز است.",
+                    "message": "لطفاً نام شهر را برای دریافت اطلاعات آب و هوا مشخص کنید."
+                }
+            
+            # Get units parameter (metric/imperial), default to metric
+            units = function_args.get("units", "metric")
+            
+            try:
+                # Import the WeatherService dynamically
+                from information_services import WeatherService
+                
+                # Create an instance of WeatherService
+                weather_service = WeatherService()
+                
+                # Get weather data
+                weather_data = await weather_service.get_weather(city, units)
+                
+                # Check if the weather data was successfully retrieved
+                if not weather_data.get("success", False):
+                    error_message = weather_data.get("error", "")
+                    if "کلید API" in error_message:
+                        # Special handling for API key not configured
+                        return {
+                            "error": "سرویس آب و هوا پیکربندی نشده است.",
+                            "message": "متأسفانه امکان دریافت اطلاعات آب و هوا در حال حاضر فراهم نیست. می‌توانید از وب‌سایت‌هایی مانند AccuWeather یا Weather.com برای بررسی آب و هوای شهرها استفاده کنید."
+                        }
+                    else:
+                        return {
+                            "error": weather_data.get("error", "خطای نامشخص در دریافت آب و هوا"),
+                            "message": f"متأسفانه نتوانستم اطلاعات آب و هوای {city} را دریافت کنم. {weather_data.get('error', '')}"
+                        }
+                
+                # Select the appropriate units based on the 'units' parameter
+                temp_unit = "°C" if units == "metric" else "°F"
+                wind_unit = "m/s" if units == "metric" else "mph"
+                
+                # Format a Persian message with the weather information
+                message = (
+                    f"🌤️ **آب و هوای {weather_data.get('city', city)}**:\n\n"
+                    f"🌡️ **دما**: {weather_data.get('temperature', 'N/A')}{temp_unit}\n"
+                    f"💧 **رطوبت**: {weather_data.get('humidity', 'N/A')}%\n"
+                    f"🍃 **باد**: {weather_data.get('wind_speed', 'N/A')} {wind_unit}\n"
+                    f"☁️ **وضعیت**: {weather_data.get('description', 'N/A')}\n"
+                )
+                
+                # Return the weather data with a formatted message
+                return {
+                    "city": weather_data.get("city", city),
+                    "temperature": weather_data.get("temperature", "N/A"),
+                    "humidity": weather_data.get("humidity", "N/A"),
+                    "wind_speed": weather_data.get("wind_speed", "N/A"),
+                    "description": weather_data.get("description", "N/A"),
+                    "message": message
+                }
+                
+            except ImportError:
+                logger.error("WeatherService module not found")
+                return {
+                    "error": "سرویس آب و هوا در دسترس نیست.",
+                    "message": "متأسفانه در حال حاضر امکان دریافت اطلاعات آب و هوا وجود ندارد."
+                }
+            except Exception as e:
+                logger.error(f"Error getting weather: {e}", exc_info=True)
+                return {
+                    "error": f"خطا در دریافت آب و هوا: {str(e)}",
+                    "message": f"متأسفانه در دریافت اطلاعات آب و هوای {city} مشکلی پیش آمد."
+                }
+        
+        elif function_name == "geocode":
+            # Validate query parameter
+            query = function_args.get("query", "").strip()
+            if not query:
+                return {
+                    "error": "برای جستجوی مکان، یک عبارت جستجو مورد نیاز است.",
+                    "message": "لطفاً نام مکان یا آدرسی که می‌خواهید جستجو کنید را وارد کنید."
+                }
+            
+            # Get optional parameters with defaults
+            limit = function_args.get("limit", 5)
+            language = function_args.get("language", "fa")
+            
+            try:
+                # Import the NominatimService dynamically
+                from information_services import NominatimService
+                
+                # Create an instance of NominatimService
+                geocoding_service = NominatimService()
+                
+                # Perform geocoding
+                geocode_result = await geocoding_service.geocode(query, limit, language)
+                
+                # Check if the geocoding was successful
+                if not geocode_result.get("success", False):
+                    return {
+                        "error": geocode_result.get("error", "خطای نامشخص در جستجوی مکان"),
+                        "message": f"متأسفانه در جستجوی '{query}' مشکلی پیش آمد. لطفاً عبارت دیگری را امتحان کنید."
+                    }
+                
+                # Return the geocoding results with a formatted message
+                return {
+                    "query": query,
+                    "results": geocode_result.get("results", []),
+                    "message": geocode_result.get("message", f"نتایج جستجو برای '{query}'")
+                }
+                
+            except ImportError:
+                logger.error("NominatimService module not found")
+                return {
+                    "error": "سرویس جستجوی مکان در دسترس نیست.",
+                    "message": "متأسفانه در حال حاضر امکان جستجوی مکان‌ها وجود ندارد."
+                }
+            except Exception as e:
+                logger.error(f"Error in geocoding: {e}", exc_info=True)
+                return {
+                    "error": f"خطا در جستجوی مکان: {str(e)}",
+                    "message": f"متأسفانه در جستجوی مکان '{query}' مشکلی پیش آمد."
+                }
+                
+        elif function_name == "reverse_geocode":
+            # Validate lat and lon parameters
+            try:
+                lat = float(function_args.get("lat", 0))
+                lon = float(function_args.get("lon", 0))
+            except (ValueError, TypeError):
+                return {
+                    "error": "مختصات جغرافیایی نامعتبر",
+                    "message": "لطفاً مختصات جغرافیایی معتبر وارد کنید (عرض و طول جغرافیایی باید اعداد باشند)."
+                }
+            
+            # Validate lat/lon are in reasonable ranges
+            if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+                return {
+                    "error": "مختصات جغرافیایی خارج از محدوده",
+                    "message": "مختصات جغرافیایی باید در محدوده معتبر باشند (عرض: -90 تا 90، طول: -180 تا 180)."
+                }
+            
+            # Get optional parameters with defaults
+            language = function_args.get("language", "fa")
+            
+            try:
+                # Import the NominatimService dynamically
+                from information_services import NominatimService
+                
+                # Create an instance of NominatimService
+                geocoding_service = NominatimService()
+                
+                # Perform reverse geocoding
+                reverse_result = await geocoding_service.reverse_geocode(lat, lon, language)
+                
+                # Check if the reverse geocoding was successful
+                if not reverse_result.get("success", False):
+                    return {
+                        "error": reverse_result.get("error", "خطای نامشخص در تبدیل مختصات به آدرس"),
+                        "message": f"متأسفانه در تبدیل مختصات ({lat}, {lon}) به آدرس مشکلی پیش آمد."
+                    }
+                
+                # Return the reverse geocoding results with a formatted message
+                return {
+                    "latitude": lat,
+                    "longitude": lon,
+                    "result": reverse_result.get("result", {}),
+                    "message": reverse_result.get("message", f"آدرس یافت شده برای مختصات ({lat}, {lon})")
+                }
+                
+            except ImportError:
+                logger.error("NominatimService module not found")
+                return {
+                    "error": "سرویس تبدیل مختصات به آدرس در دسترس نیست.",
+                    "message": "متأسفانه در حال حاضر امکان تبدیل مختصات به آدرس وجود ندارد."
+                }
+            except Exception as e:
+                logger.error(f"Error in reverse geocoding: {e}", exc_info=True)
+                return {
+                    "error": f"خطا در تبدیل مختصات به آدرس: {str(e)}",
+                    "message": f"متأسفانه در تبدیل مختصات ({lat}, {lon}) به آدرس مشکلی پیش آمد."
                 }
         
         # Handle other functions similarly
