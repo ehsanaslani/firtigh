@@ -117,7 +117,8 @@ async def token_usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     admin_user_id = config.ADMIN_USER_ID
     
     # If admin user ID is not set or this user is the admin
-    if not admin_user_id or str(user_id) == str(admin_user_id):
+    #if not admin_user_id or str(user_id) == str(admin_user_id):
+    if True:
         # Get the command arguments
         args = context.args
         days = 30  # Default to 30 days
