@@ -10,6 +10,17 @@ import asyncio
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 from typing import Optional, Dict, Any, List
+import ssl
+import certifi
+import json
+
+# Check if Brotli is available
+try:
+    import brotli
+    BROTLI_AVAILABLE = True
+except ImportError:
+    BROTLI_AVAILABLE = False
+    logging.warning("Brotli package not installed. Some websites with Brotli compression may not be accessible.")
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -113,57 +124,66 @@ async def extract_html_content(url: str) -> Optional[str]:
     """
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=DEFAULT_HEADERS, timeout=15) as response:
-                if response.status != 200:
-                    logger.error(f"Failed to fetch HTML content: {response.status}")
-                    return None
-                
-                html = await response.text()
-                soup = BeautifulSoup(html, 'html.parser')
-                
-                # Remove unwanted elements
-                for element in soup.select('script, style, nav, footer, header, [class*="menu"], [class*="sidebar"], [class*="ad"], [class*="banner"], iframe'):
-                    element.decompose()
-                
-                # Extract title
-                title = soup.title.text.strip() if soup.title else "No Title"
-                
-                # Try to find the main content
-                main_content = None
-                
-                # Look for common content containers
-                content_containers = soup.select('article, [class*="content"], [class*="post"], [class*="article"], main, #content, .content, .post, .article')
-                if content_containers:
-                    # Use the largest content container by text length
-                    main_content = max(content_containers, key=lambda x: len(x.text.strip()))
-                
-                # If no content container found, try to find the largest text block
-                if not main_content or len(main_content.text.strip()) < 100:
-                    paragraphs = soup.find_all('p')
-                    if paragraphs:
-                        # Find the div that contains the most paragraphs
-                        paragraph_parents = {}
-                        for p in paragraphs:
-                            parent = p.parent
-                            if parent not in paragraph_parents:
-                                paragraph_parents[parent] = 0
-                            paragraph_parents[parent] += 1
-                        
-                        if paragraph_parents:
-                            main_content = max(paragraph_parents.keys(), key=lambda x: paragraph_parents[x])
-                
-                # If we still don't have main content, use the body
-                if not main_content:
-                    main_content = soup.body
-                
-                if not main_content:
-                    return f"عنوان: {title}\n\nمحتوا: متأسفانه نتوانستم محتوای اصلی را از این صفحه استخراج کنم."
-                
-                # Extract text and clean it up
-                content_text = clean_extracted_text(main_content.get_text("\n", strip=True))
-                
-                return f"عنوان: {title}\n\n{content_text}"
-                
+            try:
+                async with session.get(url, headers=DEFAULT_HEADERS, timeout=15) as response:
+                    if response.status != 200:
+                        logger.error(f"Failed to fetch HTML content: {response.status}")
+                        return None
+                    
+                    html = await response.text()
+                    soup = BeautifulSoup(html, 'html.parser')
+                    
+                    # Remove unwanted elements
+                    for element in soup.select('script, style, nav, footer, header, [class*="menu"], [class*="sidebar"], [class*="ad"], [class*="banner"], iframe'):
+                        element.decompose()
+                    
+                    # Extract title
+                    title = soup.title.text.strip() if soup.title else "No Title"
+                    
+                    # Try to find the main content
+                    main_content = None
+                    
+                    # Look for common content containers
+                    content_containers = soup.select('article, [class*="content"], [class*="post"], [class*="article"], main, #content, .content, .post, .article')
+                    if content_containers:
+                        # Use the largest content container by text length
+                        main_content = max(content_containers, key=lambda x: len(x.text.strip()))
+                    
+                    # If no content container found, try to find the largest text block
+                    if not main_content or len(main_content.text.strip()) < 100:
+                        paragraphs = soup.find_all('p')
+                        if paragraphs:
+                            # Find the div that contains the most paragraphs
+                            paragraph_parents = {}
+                            for p in paragraphs:
+                                parent = p.parent
+                                if parent not in paragraph_parents:
+                                    paragraph_parents[parent] = 0
+                                paragraph_parents[parent] += 1
+                            
+                            if paragraph_parents:
+                                main_content = max(paragraph_parents.keys(), key=lambda x: paragraph_parents[x])
+                    
+                    # If we still don't have main content, use the body
+                    if not main_content:
+                        main_content = soup.body
+                    
+                    if not main_content:
+                        return f"عنوان: {title}\n\nمحتوا: متأسفانه نتوانستم محتوای اصلی را از این صفحه استخراج کنم."
+                    
+                    # Extract text and clean it up
+                    content_text = clean_extracted_text(main_content.get_text("\n", strip=True))
+                    
+                    return f"عنوان: {title}\n\n{content_text}"
+                    
+            except aiohttp.ClientError as e:
+                # Special handling for Brotli compression errors
+                if 'brotli' in str(e).lower() or 'content-encoding: br' in str(e).lower():
+                    if not BROTLI_AVAILABLE:
+                        logger.error(f"Brotli compression is used by {url} but Brotli package is not installed")
+                        return f"⚠️ نتوانستم محتوای وب‌سایت {url} را استخراج کنم زیرا از فشرده‌سازی Brotli استفاده می‌کند. برای دسترسی به این وب‌سایت، نیاز به نصب کتابخانه Brotli است."
+                logger.error(f"Error fetching URL: {e}")
+                return None
     except Exception as e:
         logger.error(f"Error extracting HTML content: {e}", exc_info=True)
         return None
