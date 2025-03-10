@@ -19,7 +19,8 @@ from telegram.ext import (
     MessageHandler, 
     CommandHandler,
     filters,
-    CallbackContext
+    CallbackContext,
+    CallbackQueryHandler
 )
 from dotenv import load_dotenv
 
@@ -27,6 +28,7 @@ from dotenv import load_dotenv
 import config
 import memory
 import database
+import token_tracking
 
 # Load environment variables from .env file
 load_dotenv()
@@ -53,6 +55,34 @@ OPENAI_MODEL_VISION = config.OPENAI_MODEL_VISION
 # Import from openai_functions after setting up compatibility
 import openai_functions
 
+# Track token usage (replaced with token_tracking module)
+def log_token_usage(response, model, request_type):
+    """Log token usage from OpenAI API response and save to token tracking database"""
+    if openai_functions.is_new_openai:
+        usage = response.usage
+        prompt_tokens = usage.prompt_tokens
+        completion_tokens = usage.completion_tokens
+        total_tokens = usage.total_tokens
+    else:
+        usage = response.get('usage', {})
+        prompt_tokens = usage.get('prompt_tokens', 0)
+        completion_tokens = usage.get('completion_tokens', 0)
+        total_tokens = usage.get('total_tokens', 0)
+    
+    # Log to console    
+    logger.info(f"Token Usage - {request_type} - {model}: prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}")
+    
+    # Track in the token tracking database
+    token_tracking.track_token_usage(
+        model=model,
+        request_type=request_type,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens
+    )
+    
+    return prompt_tokens, completion_tokens, total_tokens
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /start is issued."""
     user = update.effective_user
@@ -68,6 +98,37 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
     await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
 
+async def token_usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show token usage statistics for authorized users."""
+    # Check if user is authorized (use admin user ID from config)
+    user_id = update.effective_user.id
+    admin_user_id = config.ADMIN_USER_ID
+    
+    # If admin user ID is not set or this user is the admin
+    if not admin_user_id or str(user_id) == str(admin_user_id):
+        # Get the command arguments
+        args = context.args
+        days = 30  # Default to 30 days
+        
+        # Parse days argument if provided
+        if args and args[0].isdigit():
+            days = int(args[0])
+            days = max(1, min(days, 365))  # Limit to between 1 and 365 days
+        
+        # Generate the token usage report
+        report = token_tracking.format_token_usage_report(days=days)
+        
+        # Send the report
+        await update.message.reply_text(
+            f"```\n{report}\n```",
+            parse_mode=ParseMode.MARKDOWN_V2
+        )
+    else:
+        # Not authorized
+        await update.message.reply_text(
+            "این دستور فقط برای مدیران سیستم در دسترس است.",
+            parse_mode=ParseMode.MARKDOWN_V2
+        )
 
 async def generate_ai_response(
     prompt: str,
@@ -191,6 +252,8 @@ async def generate_ai_response(
                         max_tokens=1000,
                         temperature=0.7
                     )
+                    # Log token usage
+                    log_token_usage(response, "gpt-4-vision-preview", "Vision API")
                 else:
                     response = await openai_functions.openai_client.ChatCompletion.acreate(
                         model="gpt-4-vision-preview",
@@ -201,6 +264,8 @@ async def generate_ai_response(
                         max_tokens=1000,
                         temperature=0.7
                     )
+                    # Log token usage
+                    log_token_usage(response, "gpt-4-vision-preview", "Vision API")
                 
                 if openai_functions.is_new_openai:
                     return response.choices[0].message.content
@@ -227,6 +292,8 @@ async def generate_ai_response(
                         max_tokens=1000,
                         temperature=0.7
                     )
+                    # Log token usage
+                    log_token_usage(response, "gpt-4-turbo", "Function Calling API")
                 else:
                     response = await openai_functions.openai_client.ChatCompletion.acreate(
                         model="gpt-4-turbo",
@@ -236,6 +303,8 @@ async def generate_ai_response(
                         max_tokens=1000,
                         temperature=0.7
                     )
+                    # Log token usage
+                    log_token_usage(response, "gpt-4-turbo", "Function Calling API")
                 
                 if openai_functions.is_new_openai:
                     response_message = response.choices[0].message
@@ -285,6 +354,8 @@ async def generate_ai_response(
                                 max_tokens=1000,
                                 temperature=0.7
                             )
+                            # Log token usage
+                            log_token_usage(second_response, "gpt-4-turbo", "Function Response API")
                         else:
                             second_response = await openai_functions.openai_client.ChatCompletion.acreate(
                                 model="gpt-4-turbo",
@@ -292,6 +363,8 @@ async def generate_ai_response(
                                 max_tokens=1000,
                                 temperature=0.7
                             )
+                            # Log token usage
+                            log_token_usage(second_response, "gpt-4-turbo", "Function Response API")
                         
                         if openai_functions.is_new_openai:
                             return second_response.choices[0].message.content
@@ -761,6 +834,7 @@ def main() -> None:
     # Add handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("token_usage", token_usage_command))
     # Process all messages to check for mentions
     application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
 

@@ -7,9 +7,12 @@ import datetime
 from typing import List, Dict, Any, Optional, Set
 from collections import defaultdict
 import openai
+import sqlite3
+import asyncio
 
 # Import config for model settings
 import config
+import token_tracking
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -28,6 +31,28 @@ MAX_MEMORY_ITEMS_PER_GROUP = 100  # Increased from 30 to 100
 MAX_PROFILE_CHARACTERISTICS = 20  # Increased from 10 to 20
 MEMORY_REFRESH_DAYS = 30  # How long before a memory item is considered "old"
 MODEL_FOR_ANALYSIS = config.OPENAI_MODEL_ANALYSIS  # Use the model specified in config
+
+# Track token usage (updated to use token_tracking module)
+def log_token_usage(response, model, request_type):
+    """Log token usage from OpenAI API response and save to token tracking database"""
+    usage = response.get('usage', {})
+    prompt_tokens = usage.get('prompt_tokens', 0)
+    completion_tokens = usage.get('completion_tokens', 0)
+    total_tokens = usage.get('total_tokens', 0)
+    
+    # Log to console
+    logger.info(f"Token Usage - {request_type} - {model}: prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}")
+    
+    # Track in the token tracking database
+    token_tracking.track_token_usage(
+        model=model,
+        request_type=request_type,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens
+    )
+    
+    return prompt_tokens, completion_tokens, total_tokens
 
 def initialize_memory():
     """Initialize the memory files if they don't exist."""
@@ -51,105 +76,91 @@ def initialize_memory():
 
 async def analyze_message_for_memory(message_data: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Analyze a message to extract potential memory items.
+    Analyze a message to extract key information for memory storage.
     
     Args:
-        message_data: Dictionary containing message information
-    
+        message_data: Dictionary with message information
+        
     Returns:
-        Dictionary with extracted topics, sentiment, and other information
+        Dictionary with extracted information
     """
+    # Prepare the input for analysis
+    prompt = f"""Analyze this message and extract the following information, providing your response as a JSON object:
+
+Message: "{message_data['text']}"
+
+The JSON should have these fields:
+1. topics: List of 2-3 main topics detected in the message (very short phrases)
+2. summary: 1-2 sentence summary of the message content
+3. sentiment: Overall sentiment of the message (positive, negative, neutral)
+4. entities: List of 2-3 key entities (people, places, things) mentioned
+5. is_memorable: Boolean indicating if this message contains information worth remembering long-term
+6. interests: List of 3-5 potential interests the user might have based on this message
+7. tone: The tone of the message (formal, informal, friendly, aggressive, sarcastic, etc.)
+8. language_quality: Assessment of language use (articulate, basic, technical, etc.)
+"""
+    
+    # Use model for analysis
+    response = openai.ChatCompletion.create(
+        model=MODEL_FOR_ANALYSIS,
+        messages=[
+            {"role": "system", "content": "You are an AI that extracts key information from messages for memory purposes. Respond ONLY with the requested JSON format."},
+            {"role": "user", "content": prompt}
+        ],
+        max_tokens=400,
+        temperature=0.1  # Low temperature for consistent output
+    )
+    
+    # Log token usage
+    log_token_usage(response, MODEL_FOR_ANALYSIS, "Message Analysis")
+    
+    # Get the response content
+    result_text = response.choices[0].message.content.strip()
+    
+    # Handle potential errors in JSON parsing
     try:
-        text = message_data.get("text", "")
+        # Find and extract just the JSON part
+        start_idx = result_text.find('{')
+        end_idx = result_text.rfind('}') + 1
         
-        # Skip empty or very short messages
-        if not text or len(text) < 10:
-            return {}
-        
-        # Prepare the prompt for analysis
-        prompt = f"""
-        Analyze the following message for important information that should be remembered:
-        
-        MESSAGE: {text}
-        
-        Provide a JSON response with these fields:
-        1. topics: List of up to 5 main topics/subjects discussed
-        2. sentiment: Overall emotional tone (positive, negative, neutral)
-        3. key_points: List of up to 5 factual statements that would be valuable to remember long-term
-        4. user_traits: List of personality traits the user exhibits in this message
-        5. is_memorable: Boolean indicating if this message contains information worth remembering long-term
-        6. interests: List of 3-5 potential interests the user might have based on this message
-        7. tone: The tone of the message (formal, informal, friendly, aggressive, sarcastic, etc.)
-        8. language_quality: Assessment of language use (articulate, basic, technical, etc.)
-        """
-        
-        # Use O3 mini model for analysis
-        response = openai.ChatCompletion.create(
-            model=MODEL_FOR_ANALYSIS,
-            messages=[
-                {"role": "system", "content": "You are an AI that extracts key information from messages for memory purposes. Respond ONLY with the requested JSON format."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=400,
-            temperature=0.1  # Low temperature for consistent output
-        )
-        
-        # Get the response content
-        result_text = response.choices[0].message.content.strip()
-        
-        # Handle potential errors in JSON parsing
-        try:
-            # Find and extract just the JSON part
-            start_idx = result_text.find('{')
-            end_idx = result_text.rfind('}') + 1
-            
-            if start_idx >= 0 and end_idx > start_idx:
-                json_text = result_text[start_idx:end_idx]
-                result = json.loads(json_text)
-            else:
-                # Fallback if no JSON braces found
-                result = {
-                    "topics": [],
-                    "sentiment": "neutral",
-                    "key_points": [],
-                    "user_traits": [],
-                    "is_memorable": False,
-                    "interests": [],
-                    "tone": "neutral",
-                    "language_quality": "standard"
-                }
-            
-            # Add metadata
-            result["timestamp"] = time.time()
-            result["message_id"] = message_data.get("message_id")
-            result["message_text"] = text[:300]  # Store larger snippet (increased from 200)
-            result["sender_id"] = message_data.get("sender_id")
-            result["sender_name"] = message_data.get("sender_name")
-            
-            return result
-            
-        except json.JSONDecodeError:
-            logger.error(f"Failed to parse analysis result as JSON: {result_text}")
-            # Return a basic result
-            return {
-                "topics": [],
+        if start_idx >= 0 and end_idx > start_idx:
+            json_text = result_text[start_idx:end_idx]
+            result = json.loads(json_text)
+        else:
+            # Fallback if no JSON braces found
+            result = {
+                "topics": ["unknown"],
+                "summary": "Could not summarize message content.",
                 "sentiment": "neutral",
-                "key_points": [],
-                "user_traits": [],
+                "entities": [],
                 "is_memorable": False,
                 "interests": [],
                 "tone": "neutral",
-                "language_quality": "standard",
-                "timestamp": time.time(),
-                "message_id": message_data.get("message_id"),
-                "message_text": text[:300],
-                "sender_id": message_data.get("sender_id"),
-                "sender_name": message_data.get("sender_name")
+                "language_quality": "unknown"
             }
-            
-    except Exception as e:
-        logger.error(f"Error analyzing message for memory: {e}")
-        return {}
+            logger.warning(f"Could not extract JSON from response: {result_text}")
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON decode error: {e}", exc_info=True)
+        # Provide a default result if JSON parsing fails
+        result = {
+            "topics": ["unknown"],
+            "summary": "Could not summarize message content.",
+            "sentiment": "neutral",
+            "entities": [],
+            "is_memorable": False,
+            "interests": [],
+            "tone": "neutral",
+            "language_quality": "unknown"
+        }
+    
+    # Add the original message text and metadata
+    result["text"] = message_data.get("text", "")
+    result["user_id"] = message_data.get("user_id", 0)
+    result["username"] = message_data.get("username", "unknown")
+    result["timestamp"] = message_data.get("timestamp", datetime.now().isoformat())
+    result["message_id"] = message_data.get("message_id", 0)
+    
+    return result
 
 async def update_group_memory(chat_id: int, memory_item: Dict[str, Any]):
     """
