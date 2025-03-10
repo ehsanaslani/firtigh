@@ -52,141 +52,233 @@ async def extract_content_from_url(url: str, max_length: int = 10000) -> Optiona
     # Validate URL format
     if not is_valid_url(url):
         logger.error(f"Invalid URL format: {url}")
-        return None
+        return f"خطا: آدرس اینترنتی نامعتبر است: {url}"
     
     # Clean up the URL if needed
     url = clean_url(url)
+    logger.info(f"Cleaned URL: {url}")
     
+    # Try the standard extraction method first
     try:
         # First try to determine the type of content we're dealing with
-        content_type = await determine_content_type(url)
-        logger.info(f"Content type for {url}: {content_type}")
+        try:
+            content_type = await asyncio.wait_for(determine_content_type(url), timeout=10.0)
+            logger.info(f"Content type for {url}: {content_type}")
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout determining content type for URL: {url}")
+            content_type = "html"  # Default to HTML
+        except Exception as e:
+            logger.error(f"Error determining content type: {e}", exc_info=True)
+            content_type = "html"  # Default to HTML
         
         # Based on content type, use appropriate extraction method
-        if content_type == "html":
-            # For HTML pages, extract the main content
-            content = await extract_html_content(url)
-        elif content_type == "json":
-            # For JSON APIs, format the response
-            content = await extract_json_content(url)
-        elif content_type in ["pdf", "doc", "docx"]:
-            # For documents, we'll return a message that we can't process them yet
-            content = f"این پیوند حاوی یک فایل {content_type} است. در حال حاضر امکان استخراج محتوا از این نوع فایل وجود ندارد."
-        else:
-            # For unknown content types, extract whatever we can
-            content = await extract_generic_content(url)
+        try:
+            if content_type == "html":
+                # For HTML pages, extract the main content
+                content = await asyncio.wait_for(extract_html_content(url), timeout=15.0)
+            elif content_type == "json":
+                # For JSON APIs, format the response
+                content = await asyncio.wait_for(extract_json_content(url), timeout=10.0)
+            elif content_type in ["pdf", "doc", "docx"]:
+                # For documents, we'll return a message that we can't process them yet
+                content = f"این پیوند حاوی یک فایل {content_type} است. در حال حاضر امکان استخراج محتوا از این نوع فایل وجود ندارد."
+            else:
+                # For unknown content types, extract whatever we can
+                content = await asyncio.wait_for(extract_generic_content(url), timeout=10.0)
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout extracting content for URL: {url}")
+            content = None
+        except Exception as e:
+            logger.error(f"Error in extraction method for {content_type}: {e}", exc_info=True)
+            content = None
         
-        if not content:
-            logger.warning(f"Failed to extract content from {url}")
-            return None
+        if content:
+            return content
         
-        # Truncate content if it's too long
-        if len(content) > max_length:
-            content = content[:max_length] + "...\n\n(محتوا به دلیل طولانی بودن کوتاه شده است)"
-        
-        return content
-        
+        # If we get here, the standard extraction methods failed
+        logger.warning(f"Standard extraction methods failed for {url}, trying fallback method")
     except Exception as e:
-        logger.error(f"Error extracting content from {url}: {e}", exc_info=True)
-        return None
+        logger.error(f"Error in standard extraction process: {e}", exc_info=True)
+    
+    # Fallback method - try a very simple direct request
+    try:
+        logger.info(f"Using fallback extraction method for {url}")
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.get(url, headers=DEFAULT_HEADERS, timeout=20) as response:
+                    if response.status != 200:
+                        return f"خطا: سرور پاسخ نامعتبر برگرداند (کد وضعیت {response.status})"
+                    
+                    # Try to get the content as text
+                    html = await response.text()
+                    
+                    # Use a very simple extraction approach
+                    soup = BeautifulSoup(html, 'html.parser')
+                    
+                    # Get the title
+                    title = soup.title.text.strip() if soup.title else "No Title"
+                    
+                    # Remove scripts, styles, and other non-content elements
+                    for tag in soup(['script', 'style', 'meta', 'link', 'noscript', 'iframe']):
+                        tag.decompose()
+                    
+                    # Get all text
+                    text = soup.get_text(separator='\n', strip=True)
+                    
+                    # Clean up the text
+                    lines = [line.strip() for line in text.splitlines() if line.strip()]
+                    text = '\n'.join(lines)
+                    
+                    # Truncate if too long
+                    if len(text) > max_length:
+                        text = text[:max_length] + "..."
+                    
+                    return f"عنوان: {title}\n\n{text}"
+                    
+            except Exception as e:
+                logger.error(f"Fallback extraction failed: {e}", exc_info=True)
+                return f"خطا: نتوانستم محتوای وب‌سایت را استخراج کنم: {str(e)}"
+    except Exception as e:
+        logger.error(f"Fatal error in fallback extraction: {e}", exc_info=True)
+        return f"خطا: مشکل جدی در استخراج محتوا: {str(e)}"
 
 async def determine_content_type(url: str) -> str:
     """
-    Determine the type of content at the given URL by checking headers.
+    Determine the content type of a URL by making a HEAD request.
+    Falls back to guessing from the URL if HEAD request fails.
     """
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.head(url, headers=DEFAULT_HEADERS, allow_redirects=True, timeout=15) as response:
-                content_type = response.headers.get("Content-Type", "").lower()
+    # Add retry mechanism for network stability
+    max_retries = 3
+    retry_delay = 1  # seconds
+    
+    for attempt in range(max_retries):
+        try:
+            async with aiohttp.ClientSession() as session:
+                try:
+                    # First try a HEAD request to check the content type
+                    async with session.head(url, headers=DEFAULT_HEADERS, timeout=10, allow_redirects=True) as response:
+                        content_type = response.headers.get('Content-Type', '').lower()
+                        
+                        # Parse the content type
+                        if 'text/html' in content_type:
+                            return "html"
+                        elif 'application/json' in content_type:
+                            return "json"
+                        elif 'application/pdf' in content_type:
+                            return "pdf"
+                        elif 'application/msword' in content_type or 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' in content_type:
+                            return "doc"
+                        # Fall through to try more methods
                 
-                if "text/html" in content_type:
-                    return "html"
-                elif "application/json" in content_type:
-                    return "json"
-                elif "application/pdf" in content_type:
-                    return "pdf"
-                elif "application/msword" in content_type:
-                    return "doc"
-                elif "application/vnd.openxmlformats-officedocument.wordprocessingml.document" in content_type:
-                    return "docx"
-                else:
-                    # Default to HTML if we're not sure
-                    return "html"
-    except Exception as e:
-        logger.error(f"Error determining content type for {url}: {e}")
-        # Default to HTML when we can't determine
-        return "html"
+                except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                    logger.warning(f"HEAD request failed for {url}: {e} (attempt {attempt+1}/{max_retries})")
+                    if attempt == max_retries - 1:  # Last attempt
+                        # If we couldn't make a HEAD request, try to guess from the URL
+                        if url.endswith('.pdf'):
+                            return "pdf"
+                        elif url.endswith('.json'):
+                            return "json"
+                        elif url.endswith('.doc') or url.endswith('.docx'):
+                            return "doc"
+                        else:
+                            # Default to HTML for most URLs
+                            return "html"
+                    else:
+                        # Wait before retrying
+                        await asyncio.sleep(retry_delay * (attempt + 1))
+                        continue
+            
+            # If we got here without determining the type, default to HTML
+            return "html"
+            
+        except Exception as e:
+            logger.error(f"Error determining content type (attempt {attempt+1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                # Wait before retrying
+                await asyncio.sleep(retry_delay * (attempt + 1))
+            else:
+                # If all retries failed, default to HTML
+                return "html"
 
 async def extract_html_content(url: str) -> Optional[str]:
     """
     Extract main content from an HTML page.
     Uses heuristics to identify the main content area.
     """
-    try:
-        async with aiohttp.ClientSession() as session:
-            try:
-                async with session.get(url, headers=DEFAULT_HEADERS, timeout=15) as response:
-                    if response.status != 200:
-                        logger.error(f"Failed to fetch HTML content: {response.status}")
-                        return None
-                    
-                    html = await response.text()
-                    soup = BeautifulSoup(html, 'html.parser')
-                    
-                    # Remove unwanted elements
-                    for element in soup.select('script, style, nav, footer, header, [class*="menu"], [class*="sidebar"], [class*="ad"], [class*="banner"], iframe'):
-                        element.decompose()
-                    
-                    # Extract title
-                    title = soup.title.text.strip() if soup.title else "No Title"
-                    
-                    # Try to find the main content
-                    main_content = None
-                    
-                    # Look for common content containers
-                    content_containers = soup.select('article, [class*="content"], [class*="post"], [class*="article"], main, #content, .content, .post, .article')
-                    if content_containers:
-                        # Use the largest content container by text length
-                        main_content = max(content_containers, key=lambda x: len(x.text.strip()))
-                    
-                    # If no content container found, try to find the largest text block
-                    if not main_content or len(main_content.text.strip()) < 100:
-                        paragraphs = soup.find_all('p')
-                        if paragraphs:
-                            # Find the div that contains the most paragraphs
-                            paragraph_parents = {}
-                            for p in paragraphs:
-                                parent = p.parent
-                                if parent not in paragraph_parents:
-                                    paragraph_parents[parent] = 0
-                                paragraph_parents[parent] += 1
-                            
-                            if paragraph_parents:
-                                main_content = max(paragraph_parents.keys(), key=lambda x: paragraph_parents[x])
-                    
-                    # If we still don't have main content, use the body
-                    if not main_content:
-                        main_content = soup.body
-                    
-                    if not main_content:
-                        return f"عنوان: {title}\n\nمحتوا: متأسفانه نتوانستم محتوای اصلی را از این صفحه استخراج کنم."
-                    
-                    # Extract text and clean it up
-                    content_text = clean_extracted_text(main_content.get_text("\n", strip=True))
-                    
-                    return f"عنوان: {title}\n\n{content_text}"
-                    
-            except aiohttp.ClientError as e:
-                # Special handling for Brotli compression errors
-                if 'brotli' in str(e).lower() or 'content-encoding: br' in str(e).lower():
-                    if not BROTLI_AVAILABLE:
-                        logger.error(f"Brotli compression is used by {url} but Brotli package is not installed")
-                        return f"⚠️ نتوانستم محتوای وب‌سایت {url} را استخراج کنم زیرا از فشرده‌سازی Brotli استفاده می‌کند. برای دسترسی به این وب‌سایت، نیاز به نصب کتابخانه Brotli است."
-                logger.error(f"Error fetching URL: {e}")
-                return None
-    except Exception as e:
-        logger.error(f"Error extracting HTML content: {e}", exc_info=True)
-        return None
+    # Add retry mechanism for network stability
+    max_retries = 3
+    retry_delay = 1  # seconds
+    
+    for attempt in range(max_retries):
+        try:
+            async with aiohttp.ClientSession() as session:
+                try:
+                    async with session.get(url, headers=DEFAULT_HEADERS, timeout=15) as response:
+                        if response.status != 200:
+                            logger.error(f"Failed to fetch HTML content: status {response.status} (attempt {attempt+1}/{max_retries})")
+                            if attempt < max_retries - 1:
+                                await asyncio.sleep(retry_delay * (attempt + 1))
+                                continue
+                            else:
+                                return f"خطا: سرور پاسخ نامعتبر برگرداند (کد وضعیت {response.status})"
+                        
+                        html = await response.text()
+                        soup = BeautifulSoup(html, 'html.parser')
+                        
+                        # Remove unwanted elements
+                        for element in soup.select('script, style, nav, footer, header, [class*="menu"], [class*="sidebar"], [class*="ad"], [class*="banner"], iframe'):
+                            element.decompose()
+                        
+                        # Extract title
+                        title = soup.title.text.strip() if soup.title else "No Title"
+                        
+                        # Try to find the main content
+                        main_content = None
+                        
+                        # Look for common content containers
+                        content_containers = soup.select('article, [class*="content"], [class*="post"], [class*="article"], main, #content, .content, .post, .article')
+                        if content_containers:
+                            # Use the largest content container by text length
+                            main_content = max(content_containers, key=lambda x: len(x.text.strip()))
+                        
+                        # If no content container found, try to find the largest text block
+                        if not main_content or len(main_content.text.strip()) < 100:
+                            paragraphs = soup.find_all('p')
+                            if paragraphs:
+                                # Find the div that contains the most paragraphs
+                                paragraph_parents = {}
+                                for p in paragraphs:
+                                    parent = p.parent
+                                    if parent not in paragraph_parents:
+                                        paragraph_parents[parent] = 0
+                                    paragraph_parents[parent] += 1
+                                
+                                if paragraph_parents:
+                                    main_content = max(paragraph_parents.keys(), key=lambda x: paragraph_parents[x])
+                        
+                        # If we still don't have main content, use the body
+                        if not main_content:
+                            main_content = soup.body
+                        
+                        if not main_content:
+                            return f"عنوان: {title}\n\nمتأسفانه نتوانستم محتوای اصلی را از این صفحه استخراج کنم."
+                        
+                        # Extract text and clean it up
+                        content_text = clean_extracted_text(main_content.get_text("\n", strip=True))
+                        
+                        return f"عنوان: {title}\n\n{content_text}"
+                        
+                except aiohttp.ClientError as e:
+                    # Special handling for Brotli compression errors
+                    if 'brotli' in str(e).lower() or 'content-encoding: br' in str(e).lower():
+                        if not BROTLI_AVAILABLE:
+                            logger.error(f"Brotli compression is used by {url} but Brotli package is not installed")
+                            return f"⚠️ نتوانستم محتوای وب‌سایت {url} را استخراج کنم زیرا از فشرده‌سازی Brotli استفاده می‌کند. برای دسترسی به این وب‌سایت، نیاز به نصب کتابخانه Brotli است."
+                    logger.error(f"Error fetching URL: {e}")
+                    return None
+        except Exception as e:
+            logger.error(f"Error extracting HTML content: {e}", exc_info=True)
+            return None
 
 async def extract_json_content(url: str) -> Optional[str]:
     """Extract and format content from a JSON API response."""

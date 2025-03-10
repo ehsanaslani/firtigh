@@ -8,6 +8,8 @@ import logging
 import time
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Union, Tuple
+import asyncio
+import aiohttp
 
 # Configure logger
 logging.basicConfig(level=logging.INFO)
@@ -248,33 +250,68 @@ async def extract_content_from_url(url: str) -> Dict[str, Any]:
         url = url.strip()
         if not (url.startswith('http://') or url.startswith('https://')):
             url = 'https://' + url
+            logger.info(f"Added https:// prefix, URL is now: {url}")
             
         # Dynamically import web_extractor to avoid circular imports
         try:
             import web_extractor
             
-            # Extract content from the URL
-            content = await web_extractor.extract_content_from_url(url)
+            # Extract content from the URL with a timeout
+            logger.info(f"Calling web_extractor.extract_content_from_url for {url}")
+            start_time = time.time()
+            
+            try:
+                # Use asyncio.wait_for to add a timeout
+                content = await asyncio.wait_for(
+                    web_extractor.extract_content_from_url(url),
+                    timeout=30.0  # 30 second timeout
+                )
+                elapsed = time.time() - start_time
+                logger.info(f"URL extraction completed in {elapsed:.2f} seconds")
+                
+                # Check if content is None or empty
+                if not content:
+                    logger.warning(f"URL extraction returned empty content for {url}")
+                    return {
+                        "error": "Empty content",
+                        "message": f"متأسفانه نتوانستم محتوایی از {url} استخراج کنم. ممکن است سایت محتوای قابل استخراج نداشته باشد."
+                    }
+            except asyncio.TimeoutError:
+                logger.error(f"Timeout extracting content from URL: {url} (after {time.time() - start_time:.2f} seconds)")
+                return {
+                    "error": "Timeout",
+                    "message": f"متأسفانه زمان استخراج محتوا از {url} به پایان رسید. لطفاً مجدداً تلاش کنید یا آدرس دیگری را امتحان کنید."
+                }
             
             if content:
+                # Check if the content is an error message (Persian error messages start with خطا:)
+                if content.startswith("خطا:"):
+                    logger.warning(f"URL extraction returned error: {content}")
+                    return {
+                        "error": content,
+                        "message": f"خطا در دریافت محتوا: {content}"
+                    }
+                
                 # Create a preview of the content for display
                 preview = content[:300] + "..." if len(content) > 300 else content
                 
+                logger.info(f"Successfully extracted {len(content)} characters from {url}")
                 return {
                     "content": content,
                     "url": url,
                     "message": f"📄 **محتوای استخراج‌شده از آدرس:**\n\n{preview}\n\n🔗 [مشاهده منبع اصلی]({url})"
                 }
             else:
+                logger.warning(f"No content extracted from {url}")
                 return {
                     "error": "No content extracted",
-                    "message": f"متأسفانه نتوانستم محتوایی از {url} استخراج کنم."
+                    "message": f"متأسفانه نتوانستم محتوایی از {url} استخراج کنم. ممکن است سایت مسدود شده باشد یا محتوای آن برای استخراج مناسب نباشد."
                 }
                 
-        except ImportError:
-            logger.error("Failed to import web_extractor module")
+        except ImportError as e:
+            logger.error(f"Failed to import web_extractor module: {e}")
             return {
-                "error": "Web extractor module not available",
+                "error": f"Web extractor module not available: {str(e)}",
                 "message": "متأسفانه در حال حاضر امکان استخراج محتوا از آدرس‌های اینترنتی وجود ندارد."
             }
             
