@@ -1475,4 +1475,56 @@ async def fetch_trending_hashtags(session, url, source_name):
             
     except Exception as e:
         logger.error(f"Error in fetch_trending_hashtags from {source_name}: {e}")
-        return [] 
+        return []
+
+def select_relevant_functions(prompt: str, must_include: List[str] = None) -> List[Dict[str, Any]]:
+    """
+    Select only the relevant function definitions based on message content.
+    Always includes the functions specified in must_include.
+    
+    Args:
+        prompt: The user message to analyze
+        must_include: List of function names to always include (default: ["search_web"])
+        
+    Returns:
+        List of relevant function definitions
+    """
+    if must_include is None:
+        must_include = ["search_web"]  # Always include search by default
+    
+    prompt_lower = prompt.lower()
+    selected_functions = []
+    
+    # First, add the must-include functions
+    for func_name in must_include:
+        for func in FUNCTION_DEFINITIONS:
+            if func["name"] == func_name and func not in selected_functions:
+                selected_functions.append(func)
+    
+    # Check for URL extraction needs
+    if any(term in prompt_lower for term in ["http", "www.", ".com", ".ir", ".org", "url", "وبسایت", "سایت", "لینک"]):
+        for func in FUNCTION_DEFINITIONS:
+            if func["name"] == "extract_content_from_url" and func not in selected_functions:
+                selected_functions.append(func)
+    
+    # Check for weather queries
+    if any(term in prompt_lower for term in ["هوا", "آب و هوا", "دما", "باران", "برف", "weather", "بارش", "درجه"]):
+        for func in FUNCTION_DEFINITIONS:
+            if func["name"] == "get_weather" and func not in selected_functions:
+                selected_functions.append(func)
+    
+    # Check for location/geocoding queries
+    if any(term in prompt_lower for term in ["آدرس", "مکان", "کجاست", "جغرافیایی", "نقشه", "موقعیت", "خیابان", "map", "location"]):
+        location_functions = ["geocode", "reverse_geocode"]
+        for func in FUNCTION_DEFINITIONS:
+            if func["name"] in location_functions and func not in selected_functions:
+                selected_functions.append(func)
+    
+    # Check for chat history queries
+    if any(term in prompt_lower for term in ["تاریخچه", "گفتگو", "چت", "history", "chat"]):
+        for func in FUNCTION_DEFINITIONS:
+            if func["name"] == "get_chat_history" and func not in selected_functions:
+                selected_functions.append(func)
+    
+    # If no relevant functions found (beyond must_include), return must_include functions only
+    return selected_functions 

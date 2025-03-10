@@ -454,6 +454,7 @@ def get_user_profile(user_id: int) -> Dict[str, Any]:
 def format_memory_for_context(memory_items: List[Dict[str, Any]]) -> str:
     """
     Format memory items for inclusion in the AI prompt context.
+    Optimized to reduce token usage while preserving essential information.
     
     Args:
         memory_items: List of memory items
@@ -463,6 +464,9 @@ def format_memory_for_context(memory_items: List[Dict[str, Any]]) -> str:
     """
     if not memory_items:
         return ""
+    
+    # Limit number of memory items to process
+    memory_items = memory_items[:15]  # Only use the 15 most relevant memories
     
     # Build list of memory points grouped by topic
     memory_by_topic = defaultdict(list)
@@ -483,22 +487,33 @@ def format_memory_for_context(memory_items: List[Dict[str, Any]]) -> str:
         if not (topics or key_points):
             continue
         
-        # Add to topics
+        # Add to topics - limit length of messages
         for topic in topics:
             if topic and key_points:
-                memory_by_topic[topic].extend([f"{point} (از {sender_name})" for point in key_points])
+                # Limit to 3 key points per memory item
+                for point in key_points[:3]:
+                    # Truncate long points
+                    if len(point) > 80:
+                        point = point[:77] + "..."
+                    memory_by_topic[topic].append(f"{point} (از {sender_name})")
             elif topic and message_text:
-                memory_by_topic[topic].append(f"«{message_text[:100]}...» (از {sender_name})")
+                # Truncate long message texts
+                short_msg = message_text[:60] + "..." if len(message_text) > 60 else message_text
+                memory_by_topic[topic].append(f"«{short_msg}» (از {sender_name})")
     
-    # Format the memory
+    # Format the memory - limit number of topics
     if memory_by_topic:
-        memory_text = "حافظه گروه (موضوعات مهم و نکات کلیدی):\n"
+        memory_text = "حافظه گروه:"
         
-        for topic, points in memory_by_topic.items():
-            memory_text += f"\nموضوع: {topic}\n"
-            unique_points = list(set(points))[:5]  # Limit to 5 unique points per topic
-            for point in unique_points:
-                memory_text += f"- {point}\n"
+        # Get top topics by number of points
+        top_topics = sorted(memory_by_topic.items(), 
+                           key=lambda x: len(x[1]), 
+                           reverse=True)[:3]  # Limit to top 3 topics
+        
+        for topic, points in top_topics:
+            memory_text += f"\n{topic}: "
+            unique_points = list(set(points))[:3]  # Limit to 3 unique points per topic
+            memory_text += " | ".join(unique_points)
         
         return memory_text
     
@@ -507,6 +522,7 @@ def format_memory_for_context(memory_items: List[Dict[str, Any]]) -> str:
 def format_user_profile_for_context(profile: Dict[str, Any]) -> str:
     """
     Format a user profile for inclusion in the AI prompt context.
+    Optimized to reduce token usage while preserving essential information.
     
     Args:
         profile: User profile dictionary
@@ -529,7 +545,6 @@ def format_user_profile_for_context(profile: Dict[str, Any]) -> str:
     interests = profile.get("interests", {})
     tone_counts = profile.get("tone_counts", {})
     language_quality = profile.get("language_quality_counts", {})
-    message_count = profile.get("message_count", 0)
     
     # Calculate overall sentiment
     overall_sentiment = "خنثی"
@@ -549,49 +564,43 @@ def format_user_profile_for_context(profile: Dict[str, Any]) -> str:
         max_tone = max(tone_counts.items(), key=lambda x: x[1], default=("معمولی", 0))
         dominant_tone = max_tone[0]
     
-    # Get dominant language quality
-    dominant_lang = "استاندارد"
-    if language_quality:
-        max_lang = max(language_quality.items(), key=lambda x: x[1], default=("استاندارد", 0))
-        dominant_lang = max_lang[0]
-    
-    # Format traits
+    # Format traits - limit to top 2
     traits_text = ""
     if traits:
-        top_traits = sorted(traits.items(), key=lambda x: x[1], reverse=True)[:5]
+        top_traits = sorted(traits.items(), key=lambda x: x[1], reverse=True)[:2]
         traits_text = ", ".join([f"{trait}" for trait, _ in top_traits])
     
-    # Format topics
+    # Format topics - limit to top 2
     topics_text = ""
     if topics:
-        top_topics = sorted(topics.items(), key=lambda x: x[1], reverse=True)[:5]
+        top_topics = sorted(topics.items(), key=lambda x: x[1], reverse=True)[:2]
         topics_text = ", ".join([f"{topic}" for topic, _ in top_topics])
     
-    # Format interests
+    # Format interests - limit to top 2
     interests_text = ""
     if interests:
-        top_interests = sorted(interests.items(), key=lambda x: x[1], reverse=True)[:5]
+        top_interests = sorted(interests.items(), key=lambda x: x[1], reverse=True)[:2]
         interests_text = ", ".join([f"{interest}" for interest, _ in top_interests])
     
-    # Build profile text
-    profile_text = f"پروفایل کاربر {persian_name or username}:\n"
+    # Build profile text - more concise format
+    profile_text = f"{persian_name or username}"
+    
+    profile_parts = []
     
     if traits_text:
-        profile_text += f"- ویژگی‌های شخصیتی: {traits_text}\n"
+        profile_parts.append(f"ویژگی‌ها: {traits_text}")
     
     if topics_text:
-        profile_text += f"- موضوعات مورد بحث: {topics_text}\n"
+        profile_parts.append(f"موضوعات: {topics_text}")
     
     if interests_text:
-        profile_text += f"- علایق: {interests_text}\n"
+        profile_parts.append(f"علایق: {interests_text}")
     
-    profile_text += f"- لحن معمول: {dominant_tone}\n"
-    profile_text += f"- سبک نگارش: {dominant_lang}\n"
-    profile_text += f"- نگرش کلی: {overall_sentiment}\n"
-    profile_text += f"- تعداد پیام‌ها: {message_count}\n"
+    profile_parts.append(f"لحن: {dominant_tone}")
+    profile_parts.append(f"نگرش: {overall_sentiment}")
     
-    if persian_name and persian_name != username:
-        profile_text += f"- نام فارسی: {persian_name}\n"
+    if profile_parts:
+        profile_text += " - " + " | ".join(profile_parts)
     
     return profile_text
 

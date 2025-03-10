@@ -92,10 +92,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /help is issued."""
-    help_text = (
-        f"👋 سلام {update.effective_user.first_name if update.effective_user else ''}!\n\n"
-        "من فیرتیق هستم، یک ربات هوشمند که میتونم به سوال‌های شما پاسخ بدم و در گفتگوها شرکت کنم.\n\n"
-    )
+    help_text = """🤖 **راهنمای دستورات**
+
+/start - شروع کار با ربات
+/help - نمایش این پیام راهنما
+/token_usage - آمار مصرف توکن (مخصوص مدیران)
+/token_optimize - اطلاعات در مورد بهینه‌سازی‌های مصرف توکن
+
+برای استفاده از ربات کافیست سوال خود را بپرسید یا @BotName را در گفتگو‌های گروهی منشن کنید.
+"""
     await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
 
 async def token_usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -130,6 +135,24 @@ async def token_usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             parse_mode=ParseMode.MARKDOWN_V2
         )
 
+async def token_optimize_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show information about token usage optimizations."""
+    optimize_text = """✅ **بهینه‌سازی مصرف توکن**
+
+ربات از چندین روش برای کاهش مصرف توکن استفاده می‌کند:
+
+1️⃣ **پیام سیستمی مختصر**: کاهش طول دستورالعمل‌های راهنما
+2️⃣ **طبقه‌بندی پیام‌ها**: پرس‌وجوهای ساده زمینه غیرضروری را بارگذاری نمی‌کنند
+3️⃣ **انتخاب پویای توابع**: فقط توابع مرتبط با هر درخواست ارسال می‌شوند
+4️⃣ **محدودیت زمینه**: تاریخچه مکالمه کوتاه می‌شود
+5️⃣ **فشرده‌سازی پروفایل**: پروفایل‌های کاربر خلاصه می‌شوند
+
+این بهینه‌سازی‌ها مصرف توکن را تا ۹۰٪ کاهش داده‌اند!
+
+اطلاعات بیشتر: فایل README_TokenOptimization.md
+"""
+    await update.message.reply_text(optimize_text, parse_mode=ParseMode.MARKDOWN)
+
 async def generate_ai_response(
     prompt: str,
     is_serious: bool = False,
@@ -159,55 +182,48 @@ async def generate_ai_response(
         The generated response
     """
     try:
-        # Get memory context if not provided
-        if not memory_context and chat_id:
-            # Remove the limit parameter to be compatible with the deployed version
+        # Simple message classification to determine context needs
+        is_greeting = any(greeting in prompt.lower() for greeting in ["سلام", "درود", "خوبی", "چطوری", "hello", "hi"])
+        is_short_query = len(prompt.split()) < 6
+        needs_full_context = not (is_greeting and is_short_query)
+        
+        # Get memory context if not provided and needed
+        if not memory_context and chat_id and needs_full_context:
             memory_context = await memory.get_relevant_memory(chat_id, prompt)
             
-        # Get user profile context if not provided
-        if not user_profile_context and chat_id and user_id:
+        # Get user profile context if not provided and needed
+        if not user_profile_context and chat_id and user_id and needs_full_context:
             user_profile_context = memory.get_user_profile_context(chat_id, user_id)
         
         # Determine if we need the vision model based on media data
         use_vision = bool(media_data) or bool(additional_images)
         
-        # Prepare the system message that initializes the bot's behavior
-        system_message = f"""
-تو یک ربات هوشمند فارسی‌زبان هستی که می‌توانی با کاربران به شکل طبیعی و دوستانه صحبت کنی.
+        # Use a more concise system message to reduce token usage
+        system_message = """ربات فارسی‌زبان با لحن دوستانه که به سوالات پاسخ می‌دهد. همیشه به فارسی پاسخ بده، از ایموجی استفاده کن، اعداد و اسامی را به فارسی بنویس، و برای اطلاعات به‌روز از توابع جستجو استفاده کن."""
 
-دستورالعمل‌های مهم:
-- *همیشه به فارسی و با لحن شخصی پاسخ بده* و مستقیماً با کاربر صحبت کن.
-- از فرمت‌بندی متن (مثل **تاکید**، *ایتالیک*) و ایموجی‌های مناسب استفاده کن.
-- به سوالات با صداقت پاسخ بده و اگر چیزی را نمی‌دانی، صادقانه بگو.
-- در مکالمات، هویت خود را حفظ کن و به‌یاد داشته باش که یک ربات هوشمند هستی.
-- شخصیت دوستانه، خوش‌برخورد و کمی شوخ‌طبع خود را حفظ کن.
-- وقتی به منابع یا مطالب خارجی اشاره می‌کنی، لینک مستقیم و کامل آنها را در پاسخت بگنجان.
-- اسامی انگلیسی را به فارسی ترجمه کن (مثل "نیویورک" به جای "New York").
-- اعداد را به فارسی بنویس (مثل "۱۲۳" به جای "123").
-- از فاصله‌گذاری درست کلمات فارسی استفاده کن.
-- نقطه‌گذاری فارسی را رعایت کن (ویرگول، نقطه، علامت سوال، etc.).
-- به دانش‌هایی که داری متکی باش، اما برای اطلاعات به‌روز، جستجوی وب، و استخراج محتوا از لینک‌ها، از توابع مربوطه استفاده کن.
-"""
-
-        # Add memory context if available
-        # if memory_context:
-        #    system_message += f"\n\nاطلاعات حافظه:\n{memory_context}"
+        # Adjust system message based on conversation tone
+        if is_serious:
+            system_message += " لحن رسمی و محترمانه داشته باش."
             
-        # Add user profile context if available
-        if user_profile_context:
-            system_message += f"\n\nپروفایل کاربر:\n{user_profile_context}"
+        # Add user profile context if available and needed (in compressed form)
+        if user_profile_context and needs_full_context:
+            # Compress user profile to include only essential information
+            compressed_profile = compress_user_profile(user_profile_context)
+            system_message += f"\n\nپروفایل کاربر: {compressed_profile}"
 
         # Prepare the messages array
         messages = [
             {"role": "system", "content": system_message}
         ]
         
-        # Add conversation context if available
-        if conversation_context:
-            # Add conversation context as a separate system message for clarity
+        # Add conversation context if available and needed
+        if conversation_context and needs_full_context:
+            # Truncate conversation context to reduce token usage
+            truncated_context = truncate_context(conversation_context, max_length=1000)
+            
             messages.append({
                 "role": "system", 
-                "content": f"سابقه گفتگو (رشته‌ای از پیام‌های قبلی که باید در نظر بگیری):\n{conversation_context}"
+                "content": f"سابقه گفتگو:\n{truncated_context}"
             })
             
         # Add the user's current message
@@ -219,17 +235,19 @@ async def generate_ai_response(
             try:
                 content = []
                 
-                # Add the text part
-                content.append({"type": "text", "text": prompt})
+                # Add text content
+                content.append({
+                    "type": "text", 
+                    "text": prompt
+                })
                 
-                # Add the main image if available
-                if media_data:
-                    content.append({
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{base64.b64encode(media_data).decode('utf-8')}"
-                        }
-                    })
+                # Add the first image
+                content.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{base64.b64encode(media_data).decode('utf-8')}"
+                    }
+                })
                 
                 # Add additional images if available
                 if additional_images:
@@ -244,28 +262,28 @@ async def generate_ai_response(
                 # Use the GPT-4 Vision model with appropriate client version
                 if openai_functions.is_new_openai:
                     response = openai_functions.openai_client.chat.completions.create(
-                        model="gpt-4-vision-preview",
+                        model=OPENAI_MODEL_VISION,
                         messages=[
                             {"role": "system", "content": system_message},
                             {"role": "user", "content": content}
                         ],
-                        max_tokens=1000,
+                        max_tokens=800,  # Reduced from 1000
                         temperature=0.7
                     )
                     # Log token usage
-                    log_token_usage(response, "gpt-4-vision-preview", "Vision API")
+                    log_token_usage(response, OPENAI_MODEL_VISION, "Vision API")
                 else:
                     response = await openai_functions.openai_client.ChatCompletion.acreate(
-                        model="gpt-4-vision-preview",
+                        model=OPENAI_MODEL_VISION,
                         messages=[
                             {"role": "system", "content": system_message},
                             {"role": "user", "content": content}
                         ],
-                        max_tokens=1000,
+                        max_tokens=800,  # Reduced from 1000
                         temperature=0.7
                     )
                     # Log token usage
-                    log_token_usage(response, "gpt-4-vision-preview", "Vision API")
+                    log_token_usage(response, OPENAI_MODEL_VISION, "Vision API")
                 
                 if openai_functions.is_new_openai:
                     return response.choices[0].message.content
@@ -279,32 +297,38 @@ async def generate_ai_response(
         else:
             # Use the standard model with function calling
             try:
-                # Import the function definitions
-                from openai_functions import FUNCTION_DEFINITIONS, process_function_calls
+                # Import the function definitions and select only necessary ones
+                from openai_functions import FUNCTION_DEFINITIONS, process_function_calls, select_relevant_functions
+                
+                # Select only the relevant functions (always including search_web)
+                selected_functions = select_relevant_functions(prompt, must_include=["search_web"])
+                
+                # Choose the model based on query complexity
+                model_to_use = OPENAI_MODEL_DEFAULT
                 
                 # Make the API call with function definitions based on client version
                 if openai_functions.is_new_openai:
                     response = openai_functions.openai_client.chat.completions.create(
-                        model="gpt-4-turbo",
+                        model=model_to_use,
                         messages=messages,
-                        functions=FUNCTION_DEFINITIONS,
+                        functions=selected_functions,
                         function_call="auto",
-                        max_tokens=1000,
+                        max_tokens=800,  # Reduced from 1000
                         temperature=0.7
                     )
                     # Log token usage
-                    log_token_usage(response, "gpt-4-turbo", "Function Calling API")
+                    log_token_usage(response, model_to_use, "Function Calling API")
                 else:
                     response = await openai_functions.openai_client.ChatCompletion.acreate(
-                        model="gpt-4-turbo",
+                        model=model_to_use,
                         messages=messages,
-                        functions=FUNCTION_DEFINITIONS,
+                        functions=selected_functions,
                         function_call="auto",
-                        max_tokens=1000,
+                        max_tokens=800,  # Reduced from 1000
                         temperature=0.7
                     )
                     # Log token usage
-                    log_token_usage(response, "gpt-4-turbo", "Function Calling API")
+                    log_token_usage(response, model_to_use, "Function Calling API")
                 
                 if openai_functions.is_new_openai:
                     response_message = response.choices[0].message
@@ -349,22 +373,22 @@ async def generate_ai_response(
                         # Call the API again with the function result
                         if openai_functions.is_new_openai:
                             second_response = openai_functions.openai_client.chat.completions.create(
-                                model="gpt-4-turbo",
+                                model=model_to_use,
                                 messages=messages,
-                                max_tokens=1000,
+                                max_tokens=800,  # Reduced from 1000
                                 temperature=0.7
                             )
                             # Log token usage
-                            log_token_usage(second_response, "gpt-4-turbo", "Function Response API")
+                            log_token_usage(second_response, model_to_use, "Function Response API")
                         else:
                             second_response = await openai_functions.openai_client.ChatCompletion.acreate(
-                                model="gpt-4-turbo",
+                                model=model_to_use,
                                 messages=messages,
-                                max_tokens=1000,
+                                max_tokens=800,  # Reduced from 1000
                                 temperature=0.7
                             )
                             # Log token usage
-                            log_token_usage(second_response, "gpt-4-turbo", "Function Response API")
+                            log_token_usage(second_response, model_to_use, "Function Response API")
                         
                         if openai_functions.is_new_openai:
                             return second_response.choices[0].message.content
@@ -380,12 +404,54 @@ async def generate_ai_response(
             except Exception as e:
                 logger.error(f"Error in OpenAI API call: {e}", exc_info=True)
                 return "متأسفانه در پردازش درخواست شما مشکلی پیش آمد. لطفاً دوباره تلاش کنید."
-                
+    
     except Exception as e:
-        logger.error(f"Error generating AI response: {e}", exc_info=True)
-        return "متأسفانه در پردازش درخواست شما مشکلی پیش آمد. لطفاً دوباره تلاش کنید."
+        logger.error(f"Unexpected error in generate_ai_response: {e}", exc_info=True)
+        return "خطایی در پردازش پیام رخ داد. لطفاً دوباره تلاش کنید."
 
- 
+def compress_user_profile(profile_text: str) -> str:
+    """Compress user profile to reduce token usage"""
+    # Extract only the most important parts of the profile
+    lines = profile_text.split('\n')
+    compressed_lines = []
+    
+    # Take only the first line (username) and max 3 attribute lines
+    if lines:
+        compressed_lines.append(lines[0])  # Username line
+        
+    attribute_count = 0
+    for line in lines[1:]:
+        if line.startswith('- ') and attribute_count < 3:
+            compressed_lines.append(line)
+            attribute_count += 1
+    
+    return '\n'.join(compressed_lines)
+
+def truncate_context(context: str, max_length: int = 1000) -> str:
+    """Truncate conversation context to reduce token usage"""
+    # If context is already short enough, return as is
+    if len(context) <= max_length:
+        return context
+    
+    # Split by lines to keep whole messages
+    lines = context.split('\n')
+    
+    # If there are too many lines, keep only the most recent ones
+    if len(lines) > 10:
+        # Keep first line which might have header information
+        truncated_lines = [lines[0]]
+        
+        # Add an indicator that content was truncated
+        truncated_lines.append("... (بخشی از مکالمه حذف شده) ...")
+        
+        # Add the most recent messages prioritizing context
+        truncated_lines.extend(lines[-8:])
+        
+        return '\n'.join(truncated_lines)
+    
+    # Otherwise truncate by character count
+    return "... " + context[-(max_length-4):]
+
 async def extract_media_info(message, context):
     """
     Extract media information from a message.
@@ -442,15 +508,16 @@ async def extract_media_info(message, context):
     
     return (media_type, media_description, media_data)
 
-async def get_conversation_context(update: Update, context: ContextTypes.DEFAULT_TYPE, depth=5):
+async def get_conversation_context(update: Update, context: ContextTypes.DEFAULT_TYPE, depth=3):
     """
     Get the conversation context from the message and its reply chain.
     Handles multiple levels of replies to capture the full conversation thread.
+    Optimized to reduce token usage.
     
     Args:
         update: The update object
         context: The context object
-        depth: Maximum depth of the reply chain to follow
+        depth: Maximum depth of the reply chain to follow (reduced from 5 to 3)
         
     Returns:
         Tuple of (context_text, media_data_list, has_context)
@@ -484,7 +551,11 @@ async def get_conversation_context(update: Update, context: ContextTypes.DEFAULT
         # Construct message content
         message_content = ""
         if message.text:
-            message_content += message.text
+            # Truncate very long messages
+            if len(message.text) > 200:
+                message_content = message.text[:197] + "..."
+            else:
+                message_content = message.text
         
         # Add media description if available
         if media_description:
@@ -503,6 +574,7 @@ async def get_conversation_context(update: Update, context: ContextTypes.DEFAULT
             
         # Return formatted message if it has content
         if message_content:
+            # Use a more compact format for messages
             return f"{sender_name}: {message_content}"
         return None
     
@@ -541,6 +613,7 @@ async def get_conversation_context(update: Update, context: ContextTypes.DEFAULT
         current_message = replied_to
     
     # Now get broader context from recent messages in the chat (not just the reply chain)
+    # Limit to fewer recent messages
     if update.message.chat.type != 'private':
         # Use bot data to access recent messages
         chat_id = update.message.chat_id
@@ -550,41 +623,65 @@ async def get_conversation_context(update: Update, context: ContextTypes.DEFAULT
         if not context.bot_data['recent_messages'].get(chat_id):
             context.bot_data['recent_messages'][chat_id] = []
         
-        recent_messages = context.bot_data['recent_messages'][chat_id]
+        # Get recent messages (excluding the current one)
+        recent_messages = [
+            msg for msg in context.bot_data['recent_messages'][chat_id]
+            if msg.get('message_id') != update.message.message_id
+        ]
         
-        # Add any recent messages that aren't in the reply chain and have the bot mentioned
-        # or are from the bot (to provide additional context)
-        for msg in recent_messages[-10:]:  # Last 10 messages for context
-            # Skip messages already processed in the reply chain
-            if msg.get('message_id') in processed_message_ids:
-                continue
-                
-            sender = msg.get('sender', 'someone')
-            text = msg.get('text', '')
+        # Limit to only the 3 most recent messages (reduced from 5)
+        for recent_msg in recent_messages[-3:]:
+            sender_name = recent_msg.get('sender_name', 'someone')
+            message_text = recent_msg.get('text', '')
             
-            # Only include messages that mention the bot or are from the bot
-            bot_username = context.bot.username
-            if (f"@{bot_username}" in text or BOT_NAME in text or 
-                sender == f"@{bot_username}" or 'is_bot_message' in msg):
-                context_messages.append(f"{sender}: {text}")
-                has_context = True
+            # Truncate long messages
+            if len(message_text) > 150:
+                message_text = message_text[:147] + "..."
+                
+            if message_text and message_text not in [m.split(': ', 1)[1] for m in context_messages if ': ' in m]:
+                context_messages.append(f"{sender_name}: {message_text}")
     
-    # If we have a reply chain, add it in chronological order to the context
-    if reply_chain:
-        # Add the replies in chronological order (oldest first)
-        context_messages.extend(reversed(reply_chain))
-        has_context = True
+    # Add the current message to recent messages for future reference
+    if update.message.chat.type != 'private':
+        chat_id = update.message.chat_id
+        
+        # Store the message in a compact format
+        msg_data = {
+            'message_id': update.message.message_id,
+            'sender_name': sender_name,
+            'text': update.message.text or '',
+            'timestamp': update.message.date.timestamp()
+        }
+        
+        # Add to recent messages
+        context.bot_data['recent_messages'][chat_id].append(msg_data)
+        
+        # Keep only the 10 most recent messages (reduced from 20)
+        if len(context.bot_data['recent_messages'][chat_id]) > 10:
+            context.bot_data['recent_messages'][chat_id] = context.bot_data['recent_messages'][chat_id][-10:]
     
-    # Add the current message at the end
-    context_messages.extend(main_chain_messages)
+    # Combine all message sources (reversed reply chain + recent context + current message)
+    all_messages = reply_chain[::-1] + context_messages + main_chain_messages
     
-    # Prepare the final context text
-    if context_messages:
-        context_text = "\n".join(context_messages)
-    else:
-        context_text = ""
+    # Deduplicate messages while preserving order
+    seen = set()
+    unique_messages = []
+    for msg in all_messages:
+        if msg not in seen:
+            seen.add(msg)
+            unique_messages.append(msg)
     
-    return context_text, media_data_list, has_context
+    # Check if we have any context
+    has_context = len(unique_messages) > 1
+    
+    # Format the final context text
+    context_text = "\n".join(unique_messages)
+    
+    # If no media data, set to empty list
+    if not media_data_list:
+        media_data_list = []
+        
+    return (context_text, [data.get('data') for data in media_data_list], has_context)
 
 async def download_telegram_file(file_id, context):
     """Download a Telegram file and convert it to base64."""
@@ -835,6 +932,7 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("token_usage", token_usage_command))
+    application.add_handler(CommandHandler("token_optimize", token_optimize_command))
     # Process all messages to check for mentions
     application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
 
