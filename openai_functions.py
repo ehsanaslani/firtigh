@@ -11,10 +11,22 @@ from datetime import datetime, timedelta
 import aiohttp
 from information_services import WeatherService
 
-logger = logging.getLogger(__name__)
+# Fix OpenAI import to work with both older and newer versions
+try:
+    # Try newer version (1.0.0+) import style
+    from openai import OpenAI
+    openai_client = OpenAI(api_key=config.OPENAI_API_KEY)
+    is_new_openai = True
+    logging.info("Using OpenAI API v1.0.0+ client")
+except ImportError:
+    # Fall back to older version import style
+    import openai
+    openai.api_key = config.OPENAI_API_KEY
+    openai_client = openai
+    is_new_openai = False
+    logging.info("Using OpenAI API legacy client")
 
-# Initialize the OpenAI client
-openai_client = OpenAI(api_key=config.OPENAI_API_KEY)
+logger = logging.getLogger(__name__)
 
 def get_openai_function_definitions() -> List[Dict[str, Any]]:
     """
@@ -242,7 +254,7 @@ async def get_chat_history(days: int, chat_id: int) -> Dict[str, Any]:
             "summary": "Error retrieving chat history."
         }
 
-async def process_function_calls(response_message, chat_id: Optional[int] = None, user_id: Optional[int] = None) -> Dict[str, Any]:
+async def process_function_calls(response_message, chat_id: Optional[int] = None, user_id: Optional[int] = None) -> str:
     """
     Process function calls from the OpenAI API response.
     
@@ -252,174 +264,235 @@ async def process_function_calls(response_message, chat_id: Optional[int] = None
         user_id: The user ID (for context)
     
     Returns:
-        The processed response
+        The processed response as a string
     """
     try:
         message = response_message.choices[0].message
         
-        # If there's a function call in the response
-        if hasattr(message, 'tool_calls') and message.tool_calls:
-            tool_call = message.tool_calls[0]
-            function_name = tool_call.function.name
-            function_args = json.loads(tool_call.function.arguments)
-            
-            # Log the function call
-            logging.info(f"Function call: {function_name} with arguments {function_args}")
-            
-            # Execute the function
-            if function_name == "search_web":
-                query = function_args.get("query")
-                is_news = function_args.get("is_news", False)
-                result = await search_web(query, is_news)
-                
-            elif function_name == "extract_content_from_url":
-                url = function_args.get("url")
-                result = await extract_content_from_url(url)
-                
-            elif function_name == "get_chat_history":
-                days = function_args.get("days", 3)
-                chat_id_param = function_args.get("chat_id", chat_id)
-                result = await get_chat_history(days, chat_id_param)
-                
-            elif function_name == "get_weather":
-                city = function_args.get("city")
-                units = function_args.get("units", "metric")
-                
-                # Initialize the weather service
-                weather_service = WeatherService()
-                weather_data = await weather_service.get_weather(city, units)
-                
-                if isinstance(weather_data, dict) and not weather_data.get("success", False):
-                    result = {
-                        "error": weather_data.get("error", "خطای نامشخص"),
-                        "message": f"متأسفانه در دریافت اطلاعات آب و هوای {city} مشکلی پیش آمد."
-                    }
-                else:
-                    # Format weather response
-                    temp_unit = "°C" if units == "metric" else "°F"
-                    wind_unit = "m/s" if units == "metric" else "mph"
-                    
-                    result = {
-                        "city": weather_data.get("city", city),
-                        "country": weather_data.get("country", ""),
-                        "temperature": weather_data.get("temperature", "N/A"),
-                        "description": weather_data.get("description", "N/A"),
-                        "humidity": weather_data.get("humidity", "N/A"),
-                        "wind_speed": weather_data.get("wind_speed", "N/A"),
-                        "formatted_message": (
-                            f"🌤️ آب و هوای {weather_data.get('city', city)} ({weather_data.get('country', '')}):\n\n"
-                            f"🌡️ دما: {weather_data.get('temperature', 'N/A')}{temp_unit}\n"
-                            f"📝 وضعیت: {weather_data.get('description', 'N/A')}\n"
-                            f"💧 رطوبت: {weather_data.get('humidity', 'N/A')}%\n"
-                            f"💨 سرعت باد: {weather_data.get('wind_speed', 'N/A')} {wind_unit}"
-                        )
-                    }
-            elif function_name == "get_top_news":
-                category = function_args.get("category", "general")
-                persian_only = function_args.get("persian_only", False)
-                result = await get_top_news(category, persian_only)
-                
-                # Format the result for a better user response
-                if "error" in result:
-                    result["formatted_message"] = f"متأسفانه در دریافت اخبار مشکلی پیش آمد: {result['error']}"
-                else:
-                    # Create a nicely formatted news digest
-                    persian_category_names = {
-                        "general": "عمومی",
-                        "politics": "سیاسی",
-                        "business": "اقتصادی",
-                        "technology": "فناوری",
-                        "entertainment": "سرگرمی",
-                        "sports": "ورزشی",
-                        "science": "علمی",
-                        "health": "سلامت"
-                    }
-                    
-                    category_persian = persian_category_names.get(category, "عمومی")
-                    
-                    formatted_message = f"📰 **اخبار {category_persian}** (به‌روز شده در {datetime.now().strftime('%H:%M')})\n\n"
-                    
-                    # Group news by source
-                    news_by_source = {}
-                    for article in result["articles"]:
-                        source = article["source"]
-                        if source not in news_by_source:
-                            news_by_source[source] = []
-                        news_by_source[source].append(article)
-                    
-                    # Format each source's news
-                    for source, articles in news_by_source.items():
-                        formatted_message += f"**{source}**:\n"
-                        for article in articles[:2]:  # Limit to 2 headlines per source
-                            title = article["title"]
-                            url = article["url"]
-                            formatted_message += f"• {title}\n"
-                        formatted_message += "\n"
-                    
-                    result["formatted_message"] = formatted_message
-            elif function_name == "get_trending_hashtags":
-                region = function_args.get("region", "worldwide")
-                count = function_args.get("count", 20)
-                result = await get_trending_hashtags(region, count)
-                
-                # Format the result for a better user response
-                if "error" in result:
-                    result["formatted_message"] = f"متأسفانه در دریافت هشتگ‌های داغ مشکلی پیش آمد: {result['error']}"
-                else:
-                    # Create a nicely formatted trends digest
-                    region_persian = {
-                        "worldwide": "جهانی",
-                        "iran": "ایران"
-                    }.get(region, "جهانی")
-                    
-                    formatted_message = f"🔥 **هشتگ‌های داغ در ایکس (توییتر) - {region_persian}**\n"
-                    formatted_message += f"به‌روزرسانی: {datetime.now().strftime('%H:%M')}\n\n"
-                    
-                    # Add trending hashtags
-                    if result.get("trends"):
-                        for i, trend in enumerate(result["trends"][:min(count, len(result["trends"]))], 1):
-                            name = trend['name']
-                            volume = trend.get('tweet_volume', 'N/A')
-                            
-                            # Format tweet volume in Persian
-                            if volume != 'N/A':
-                                volume_text = f"{volume:,}".replace(',', '،') + " توییت"
-                            else:
-                                volume_text = "نامشخص"
-                                
-                            formatted_message += f"{i}. **{name}** - {volume_text}\n"
-                    else:
-                        formatted_message += "متأسفانه، هشتگی یافت نشد."
-                    
-                    result["formatted_message"] = formatted_message
-            else:
-                result = {
-                    "error": f"Function {function_name} not implemented",
-                    "formatted_message": "متأسفانه این عملیات در حال حاضر پشتیبانی نمی‌شود."
-                }
-            
-            # Follow-up with the AI using the function result
+        # If there's no function call, just return the message content
+        if not (hasattr(message, 'tool_calls') and message.tool_calls):
+            return message.content
+        
+        # Process the function call
+        tool_call = message.tool_calls[0]
+        function_name = tool_call.function.name
+        function_args = json.loads(tool_call.function.arguments)
+        
+        # Log the function call
+        logging.info(f"Function call: {function_name} with arguments {function_args}")
+        
+        # Execute the appropriate function
+        result = await execute_function(function_name, function_args, chat_id, user_id)
+        
+        # Get a more concise version of the result for the API call
+        api_result = get_api_safe_result(result)
+        
+        # Follow-up with the AI using the function result - handle different OpenAI versions
+        if is_new_openai:
+            # New OpenAI client (v1.0.0+)
             second_response = await openai_client.chat.completions.create(
-                model="gpt-4-turbo",  # or whatever model you're using
+                model="gpt-4-turbo",
                 messages=[
                     {"role": "user", "content": message.content},
                     {"role": "assistant", "content": None, "tool_calls": message.tool_calls},
-                    {"role": "tool", "tool_call_id": tool_call.id, "content": json.dumps(result)}
+                    {"role": "tool", "tool_call_id": tool_call.id, "content": json.dumps(api_result)}
                 ],
                 temperature=0.7,
                 max_tokens=1000
             )
-            
-            # Return the final response
             return second_response.choices[0].message.content
-            
         else:
-            # If there's no function call, just return the message content
-            return message.content
-            
+            # Legacy OpenAI client (pre-1.0.0)
+            function_name = function_name  # Get function name from tool_call
+            second_response = await openai_client.ChatCompletion.acreate(
+                model="gpt-4-turbo",
+                messages=[
+                    {"role": "user", "content": message.content},
+                    {"role": "assistant", "content": None, "function_call": {"name": function_name, "arguments": function_args}},
+                    {"role": "function", "name": function_name, "content": json.dumps(api_result)}
+                ],
+                temperature=0.7,
+                max_tokens=1000
+            )
+            return second_response.choices[0].message.content
+        
     except Exception as e:
         logging.error(f"Error processing function calls: {e}")
         return f"متأسفانه در پردازش درخواست شما مشکلی پیش آمد: {str(e)}"
+
+async def execute_function(function_name: str, function_args: dict, chat_id: Optional[int] = None, user_id: Optional[int] = None) -> Dict[str, Any]:
+    """Execute the requested function with provided arguments"""
+    try:
+        if function_name == "search_web":
+            query = function_args.get("query")
+            is_news = function_args.get("is_news", False)
+            return await search_web(query, is_news)
+            
+        elif function_name == "extract_content_from_url":
+            url = function_args.get("url")
+            return await extract_content_from_url(url)
+            
+        elif function_name == "get_chat_history":
+            days = function_args.get("days", 3)
+            chat_id_param = function_args.get("chat_id", chat_id)
+            return await get_chat_history(days, chat_id_param)
+            
+        elif function_name == "get_weather":
+            city = function_args.get("city")
+            units = function_args.get("units", "metric")
+            
+            # Initialize the weather service
+            weather_service = WeatherService()
+            weather_data = await weather_service.get_weather(city, units)
+            
+            if isinstance(weather_data, dict) and not weather_data.get("success", False):
+                return {
+                    "error": weather_data.get("error", "خطای نامشخص"),
+                    "formatted_message": f"متأسفانه در دریافت اطلاعات آب و هوای {city} مشکلی پیش آمد."
+                }
+            
+            # Format weather response
+            temp_unit = "°C" if units == "metric" else "°F"
+            wind_unit = "m/s" if units == "metric" else "mph"
+            
+            return {
+                "city": weather_data.get("city", city),
+                "country": weather_data.get("country", ""),
+                "temperature": weather_data.get("temperature", "N/A"),
+                "description": weather_data.get("description", "N/A"),
+                "humidity": weather_data.get("humidity", "N/A"),
+                "wind_speed": weather_data.get("wind_speed", "N/A"),
+                "formatted_message": (
+                    f"🌤️ آب و هوای {weather_data.get('city', city)} ({weather_data.get('country', '')}):\n\n"
+                    f"🌡️ دما: {weather_data.get('temperature', 'N/A')}{temp_unit}\n"
+                    f"📝 وضعیت: {weather_data.get('description', 'N/A')}\n"
+                    f"💧 رطوبت: {weather_data.get('humidity', 'N/A')}%\n"
+                    f"💨 سرعت باد: {weather_data.get('wind_speed', 'N/A')} {wind_unit}"
+                )
+            }
+            
+        elif function_name == "get_top_news":
+            category = function_args.get("category", "general")
+            persian_only = function_args.get("persian_only", False)
+            result = await get_top_news(category, persian_only)
+            
+            # Format the result
+            if "error" in result:
+                result["formatted_message"] = f"متأسفانه در دریافت اخبار مشکلی پیش آمد: {result['error']}"
+            else:
+                # Create a nicely formatted news digest
+                persian_category_names = {
+                    "general": "عمومی", "politics": "سیاسی", "business": "اقتصادی",
+                    "technology": "فناوری", "entertainment": "سرگرمی", "sports": "ورزشی",
+                    "science": "علمی", "health": "سلامت"
+                }
+                
+                category_persian = persian_category_names.get(category, "عمومی")
+                
+                formatted_message = f"📰 **اخبار {category_persian}** (به‌روز شده در {datetime.now().strftime('%H:%M')})\n\n"
+                
+                # Group news by source without limiting (as requested by user)
+                news_by_source = {}
+                for article in result["articles"]:
+                    source = article["source"]
+                    if source not in news_by_source:
+                        news_by_source[source] = []
+                    news_by_source[source].append(article)
+                
+                # Format each source's news with complete URLs
+                for source, articles in news_by_source.items():
+                    formatted_message += f"**{source}**:\n"
+                    for article in articles[:2]:  # Still limit to 2 headlines per source for readability
+                        title = article["title"]
+                        url = article["url"]
+                        formatted_message += f"• {title}\n  {url}\n"
+                    formatted_message += "\n"
+                
+                result["formatted_message"] = formatted_message
+            
+            return result
+            
+        elif function_name == "get_trending_hashtags":
+            region = function_args.get("region", "worldwide")
+            count = function_args.get("count", 20)  # Use the requested count without limiting
+            result = await get_trending_hashtags(region, count)
+            
+            # Format the result
+            if "error" in result:
+                result["formatted_message"] = f"متأسفانه در دریافت هشتگ‌های داغ مشکلی پیش آمد: {result['error']}"
+            else:
+                # Create a nicely formatted trends digest
+                region_persian = {"worldwide": "جهانی", "iran": "ایران"}.get(region, "جهانی")
+                
+                formatted_message = f"🔥 **هشتگ‌های داغ در ایکس (توییتر) - {region_persian}**\n"
+                formatted_message += f"به‌روزرسانی: {datetime.now().strftime('%H:%M')}\n\n"
+                
+                # Add trending hashtags without limiting
+                if result.get("trends"):
+                    for i, trend in enumerate(result["trends"][:count], 1):
+                        name = trend['name']
+                        volume = trend.get('tweet_volume', 'N/A')
+                        url = trend.get('url', '')
+                        
+                        # Format tweet volume in Persian
+                        volume_text = "نامشخص" if volume == 'N/A' else f"{volume:,}".replace(',', '،') + " توییت"
+                        
+                        formatted_message += f"{i}. **{name}** - {volume_text}\n   {url}\n"
+                else:
+                    formatted_message += "متأسفانه، هشتگی یافت نشد."
+                
+                result["formatted_message"] = formatted_message
+            
+            return result
+        else:
+            return {
+                "error": f"Function {function_name} not implemented",
+                "formatted_message": "متأسفانه این عملیات در حال حاضر پشتیبانی نمی‌شود."
+            }
+            
+    except Exception as e:
+        logging.error(f"Error executing function {function_name}: {e}")
+        return {"error": str(e), "formatted_message": f"خطا در اجرای درخواست: {str(e)}"}
+
+def get_api_safe_result(result: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Create a token-optimized version of the result to send to the OpenAI API.
+    Preserves complete information for news and trends but optimizes other data types.
+    
+    Args:
+        result: The full result from the function
+        
+    Returns:
+        An API-ready version with preserved news and trends data
+    """
+    # For news and trends, we'll keep all the original information as requested
+    if "articles" in result or "trends" in result:
+        # Keep the original result but ensure the formatted message is included
+        if "formatted_message" in result:
+            api_result = result.copy()
+            api_result["message"] = result["formatted_message"]
+            return api_result
+        return result
+    
+    # For other function types, still apply optimizations
+    api_result = {}
+    
+    # Always include the formatted message if available
+    if "formatted_message" in result:
+        api_result["message"] = result["formatted_message"]
+    
+    # Include error information if present
+    if "error" in result:
+        api_result["error"] = result["error"]
+        return api_result
+    
+    # For other types, include basic information but optimize nested structures
+    for key, value in result.items():
+        if key not in ["formatted_message"]:  # Skip what we've already handled
+            if not isinstance(value, (dict, list)):  # Skip complex nested structures unless needed
+                api_result[key] = value
+    
+    return api_result
 
 async def get_top_news(category: str = "general", persian_only: bool = False) -> Dict[str, Any]:
     """

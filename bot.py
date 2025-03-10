@@ -148,15 +148,37 @@ async def generate_ai_response(
             
             messages.append({"role": "user", "content": content})
             
-            # Use the vision model
-            response = await openai_client.chat.completions.create(
-                model="gpt-4-vision-preview",
-                messages=messages,
-                max_tokens=1000,
-                temperature=0.7,
-            )
-            
-            return response.choices[0].message.content
+            # Use the vision model - handle different OpenAI library versions
+            try:
+                # Check if we're using the new OpenAI client (v1.0.0+) or the old one
+                if hasattr(openai_functions, "is_new_openai") and openai_functions.is_new_openai:
+                    # New client style (v1.0.0+)
+                    response = await openai_functions.openai_client.chat.completions.create(
+                        model="gpt-4-vision-preview",
+                        messages=messages,
+                        max_tokens=1000,
+                        temperature=0.7,
+                    )
+                else:
+                    # Legacy client style (pre-1.0.0)
+                    response = await openai_functions.openai_client.ChatCompletion.acreate(
+                        model="gpt-4-vision-preview",
+                        messages=messages,
+                        max_tokens=1000,
+                        temperature=0.7,
+                    )
+                
+                return response.choices[0].message.content
+            except AttributeError:
+                # Fallback in case of unexpected client structure
+                logger.error("Error with OpenAI client version detection, trying legacy method")
+                response = await openai_functions.openai_client.ChatCompletion.acreate(
+                    model="gpt-4-vision-preview",
+                    messages=messages,
+                    max_tokens=1000,
+                    temperature=0.7,
+                )
+                return response.choices[0].message.content
         else:
             # Regular text request with function calling
             messages.append({"role": "user", "content": prompt})
@@ -164,18 +186,49 @@ async def generate_ai_response(
             # Get function definitions from openai_functions module
             from openai_functions import get_openai_function_definitions, process_function_calls
             
-            # Use the regular chat model with function calling
-            response = await openai_client.chat.completions.create(
-                model="gpt-4-turbo",
-                messages=messages,
-                tools=[{"type": "function", "function": func} for func in get_openai_function_definitions()],
-                tool_choice="auto",
-                temperature=0.7,
-                max_tokens=1000
-            )
-            
-            # Process any function calls
-            return await process_function_calls(response, chat_id=chat_id, user_id=user_id)
+            try:
+                # Handle different OpenAI versions
+                if hasattr(openai_functions, "is_new_openai") and openai_functions.is_new_openai:
+                    # New client style (v1.0.0+)
+                    response = await openai_functions.openai_client.chat.completions.create(
+                        model="gpt-4-turbo",
+                        messages=messages,
+                        tools=[{"type": "function", "function": func} for func in get_openai_function_definitions()],
+                        tool_choice="auto",
+                        temperature=0.7,
+                        max_tokens=1000
+                    )
+                else:
+                    # Legacy client style (pre-1.0.0)
+                    response = await openai_functions.openai_client.ChatCompletion.acreate(
+                        model="gpt-4-turbo",
+                        messages=messages,
+                        functions=get_openai_function_definitions(),
+                        function_call="auto",
+                        temperature=0.7,
+                        max_tokens=1000
+                    )
+                
+                # Process any function calls
+                return await process_function_calls(response, chat_id=chat_id, user_id=user_id)
+            except Exception as e:
+                logger.error(f"Error with function calling: {e}")
+                # Fallback to basic completion without functions
+                if hasattr(openai_functions, "is_new_openai") and openai_functions.is_new_openai:
+                    basic_response = await openai_functions.openai_client.chat.completions.create(
+                        model="gpt-4-turbo",
+                        messages=messages,
+                        temperature=0.7,
+                        max_tokens=1000
+                    )
+                else:
+                    basic_response = await openai_functions.openai_client.ChatCompletion.acreate(
+                        model="gpt-4-turbo",
+                        messages=messages,
+                        temperature=0.7,
+                        max_tokens=1000
+                    )
+                return basic_response.choices[0].message.content
     
     except Exception as e:
         logging.error(f"Error generating response: {e}", exc_info=True)
