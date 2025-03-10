@@ -65,7 +65,7 @@ def get_openai_function_definitions() -> List[Dict[str, Any]]:
         },
         {
             "name": "extract_content_from_url",
-            "description": "Extract and summarize content from a URL",
+            "description": "Extract content from a URL",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -158,43 +158,85 @@ def get_openai_function_definitions() -> List[Dict[str, Any]]:
 # Function implementations
 async def search_web(query: str, is_news: bool = False) -> Dict[str, Any]:
     """
-    Search the web for information based on the query.
+    Search the web for information using the specified query.
     
     Args:
         query: The search query
-        is_news: Whether to search specifically for news
+        is_news: Whether to search for news
         
     Returns:
-        A dictionary with the search results
+        A dictionary with search results
     """
     try:
-        # Log the search request
         logger.info(f"Searching web for: {query} (is_news={is_news})")
         
-        # Call the web search function
-        search_results = await web_search.search_web(query)
+        # Call the web search function (using your web_search implementation)
+        # Make sure web_search is properly imported and initialized
+        if not hasattr(web_search, "search_web"):
+            # Fallback if web_search module is not properly set up
+            raise ImportError("Web search module not properly configured")
+            
+        search_results = await web_search.search_web(query, is_news)
         
         # Format and extract relevant information
         results = []
         
+        if not search_results or not isinstance(search_results, list):
+            # Handle empty or invalid results
+            return {
+                "results": [],
+                "query": query,
+                "is_news": is_news,
+                "formatted_message": f"برای جستجوی '{query}' نتیجه‌ای یافت نشد."
+            }
+        
+        # Process the results
         for result in search_results[:5]:  # Limit to top 5 results
-            results.append({
-                "title": result.get("title", "Untitled"),
-                "snippet": result.get("snippet", "No description available"),
-                "url": result.get("link", "")
-            })
+            if isinstance(result, dict):
+                results.append({
+                    "title": result.get("title", "بدون عنوان"),
+                    "snippet": result.get("snippet", "توضیحات در دسترس نیست."),
+                    "url": result.get("link", "")
+                })
+            else:
+                # Skip non-dictionary results
+                continue
+        
+        # Create a formatted message for display
+        formatted_message = f"🔍 **نتایج جستجو برای: {query}**\n\n"
+        
+        if not results:
+            formatted_message += "متأسفانه نتیجه‌ای یافت نشد."
+        else:
+            for i, result in enumerate(results, 1):
+                formatted_message += f"{i}. **{result['title']}**\n"
+                formatted_message += f"{result['snippet']}\n"
+                formatted_message += f"🔗 {result['url']}\n\n"
         
         return {
             "results": results,
             "query": query,
-            "is_news": is_news
+            "is_news": is_news,
+            "formatted_message": formatted_message
         }
         
+    except ImportError as ie:
+        logger.error(f"Import error in search_web: {ie}")
+        return {
+            "error": "جستجوی وب پیکربندی نشده است.",
+            "query": query,
+            "is_news": is_news,
+            "results": [],
+            "formatted_message": "متأسفانه در حال حاضر امکان جستجوی وب فراهم نیست. لطفاً با پشتیبانی تماس بگیرید."
+        }
     except Exception as e:
-        logger.error(f"Error in search_web: {e}")
+        logger.error(f"Error in search_web: {e}", exc_info=True)
         return {
             "error": str(e),
-            "results": []
+            "query": query,
+            "is_news": is_news,
+            "results": [],
+            "formatted_message": f"متأسفانه در جستجوی وب برای '{query}' مشکلی پیش آمد: {str(e)}"
         }
 
 async def extract_content_from_url(url: str) -> Dict[str, Any]:
@@ -211,26 +253,59 @@ async def extract_content_from_url(url: str) -> Dict[str, Any]:
         # Log the extraction request
         logger.info(f"Extracting content from URL: {url}")
         
+        # Validate URL format
+        if not url.startswith(('http://', 'https://')):
+            return {
+                "error": "URL format invalid",
+                "url": url,
+                "formatted_message": f"فرمت آدرس وب نامعتبر است. لطفاً آدرس را با http:// یا https:// شروع کنید."
+            }
+        
+        # Check if web_extractor is properly configured
+        if not hasattr(web_extractor, "extract_content_from_url"):
+            raise ImportError("Web extraction module not properly configured")
+        
         # Extract content from the URL
         title, content = await web_extractor.extract_content_from_url(url)
         
         if title == "Error" or not content:
             return {
-                "content": f"Could not extract content from the URL. {content}",
-                "url": url
+                "error": "Failed to extract content",
+                "url": url,
+                "formatted_message": f"نمی‌توانم محتوا را از این آدرس استخراج کنم: {url}\n\n{content}"
             }
+        
+        # Create a nicely formatted message
+        formatted_message = f"📄 **{title}**\n\n"
+        
+        # Truncate content if it's too long for display
+        display_content = content
+        if len(content) > 1500:
+            display_content = content[:1500] + "...\n\n(محتوا بسیار طولانی است و خلاصه شده است)"
+        
+        formatted_message += display_content
+        formatted_message += f"\n\n🔗 [منبع]({url})"
         
         return {
             "title": title,
             "content": content,
-            "url": url
+            "url": url,
+            "formatted_message": formatted_message
         }
         
+    except ImportError as ie:
+        logger.error(f"Import error in extract_content_from_url: {ie}")
+        return {
+            "error": "استخراج محتوا از وب پیکربندی نشده است.",
+            "url": url,
+            "formatted_message": "متأسفانه در حال حاضر امکان استخراج محتوا از وب فراهم نیست. لطفاً با پشتیبانی تماس بگیرید."
+        }
     except Exception as e:
-        logger.error(f"Error in extract_content_from_url: {e}")
+        logger.error(f"Error in extract_content_from_url: {e}", exc_info=True)
         return {
             "error": str(e),
-            "content": "Error extracting content from the URL."
+            "url": url,
+            "formatted_message": f"متأسفانه در استخراج محتوا از آدرس {url} مشکلی پیش آمد: {str(e)}"
         }
 
 async def get_chat_history(days: int, chat_id: int) -> Dict[str, Any]:
@@ -373,14 +448,57 @@ async def process_function_calls(response_message, chat_id: Optional[int] = None
 async def execute_function(function_name: str, function_args: dict, chat_id: Optional[int] = None, user_id: Optional[int] = None) -> Dict[str, Any]:
     """Execute the requested function with provided arguments"""
     try:
+        # Log the function execution
+        logger.info(f"Executing function: {function_name} with args: {function_args}")
+        
         if function_name == "search_web":
-            query = function_args.get("query")
+            query = function_args.get("query", "")
+            if not query:
+                return {
+                    "error": "نیاز به یک جستجوی معتبر است.",
+                    "formatted_message": "برای جستجو در وب، لطفاً یک عبارت جستجو وارد کنید."
+                }
+            
             is_news = function_args.get("is_news", False)
-            return await search_web(query, is_news)
+            result = await search_web(query, is_news)
+            
+            # Ensure there's a formatted_message
+            if "formatted_message" not in result:
+                if "error" in result:
+                    result["formatted_message"] = f"متأسفانه در جستجوی '{query}' مشکلی پیش آمد: {result['error']}"
+                else:
+                    result["formatted_message"] = f"نتایج جستجو برای '{query}' دریافت شد، اما نمایش آن با مشکل مواجه شد."
+            
+            return result
             
         elif function_name == "extract_content_from_url":
-            url = function_args.get("url")
-            return await extract_content_from_url(url)
+            url = function_args.get("url", "")
+            if not url:
+                return {
+                    "error": "نیاز به یک آدرس وب معتبر است.",
+                    "formatted_message": "برای استخراج محتوا، لطفاً یک آدرس وب معتبر وارد کنید."
+                }
+            
+            # Clean up the URL if needed
+            url = url.strip()
+            if not (url.startswith('http://') or url.startswith('https://')):
+                url = 'https://' + url
+            
+            result = await extract_content_from_url(url)
+            
+            # Ensure there's a formatted_message
+            if "formatted_message" not in result:
+                if "error" in result:
+                    result["formatted_message"] = f"متأسفانه در استخراج محتوا از {url} مشکلی پیش آمد: {result['error']}"
+                elif "content" in result:
+                    # Create a simple formatted message from the title and content
+                    title = result.get("title", "محتوای استخراج شده")
+                    content_preview = result["content"][:500] + "..." if len(result["content"]) > 500 else result["content"]
+                    result["formatted_message"] = f"**{title}**\n\n{content_preview}\n\n🔗 [مشاهده منبع]({url})"
+                else:
+                    result["formatted_message"] = f"محتوا از {url} استخراج شد، اما نمایش آن با مشکل مواجه شد."
+            
+            return result
             
         elif function_name == "get_chat_history":
             days = function_args.get("days", 3)
@@ -454,7 +572,7 @@ async def execute_function(function_name: str, function_args: dict, chat_id: Opt
                     formatted_message += f"**{source}**:\n"
                     for article in articles[:2]:  # Still limit to 2 headlines per source for readability
                         title = article["title"]
-                        url = article["url"]
+                        url = article.get("url", "")
                         formatted_message += f"• {title}\n  {url}\n"
                     formatted_message += "\n"
                 
@@ -501,7 +619,7 @@ async def execute_function(function_name: str, function_args: dict, chat_id: Opt
             }
             
     except Exception as e:
-        logging.error(f"Error executing function {function_name}: {e}")
+        logger.error(f"Error executing function {function_name}: {e}", exc_info=True)
         return {"error": str(e), "formatted_message": f"خطا در اجرای درخواست: {str(e)}"}
 
 def get_api_safe_result(result: Dict[str, Any]) -> Dict[str, Any]:
