@@ -268,14 +268,18 @@ async def generate_ai_response(
                 # Add the first image if valid
                 if media_data is not None:
                     try:
-                        content.append({
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64.b64encode(media_data).decode('utf-8')}"
-                            }
-                        })
-                    except TypeError as e:
-                        logger.error(f"Error encoding main image: {e}")
+                        # Ensure media_data is bytes
+                        if isinstance(media_data, bytes):
+                            content.append({
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{base64.b64encode(media_data).decode('utf-8')}"
+                                }
+                            })
+                        else:
+                            logger.error(f"Invalid media_data type: {type(media_data)}, expected bytes")
+                    except Exception as e:
+                        logger.error(f"Error encoding main image: {e}", exc_info=True)
                         # Don't add if invalid
                 
                 # Add additional images if available
@@ -283,14 +287,18 @@ async def generate_ai_response(
                     for img_data in additional_images:
                         if img_data is not None:
                             try:
-                                content.append({
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": f"data:image/jpeg;base64,{base64.b64encode(img_data).decode('utf-8')}"
-                                    }
-                                })
-                            except TypeError as e:
-                                logger.error(f"Error encoding additional image: {e}")
+                                # Ensure img_data is bytes
+                                if isinstance(img_data, bytes):
+                                    content.append({
+                                        "type": "image_url",
+                                        "image_url": {
+                                            "url": f"data:image/jpeg;base64,{base64.b64encode(img_data).decode('utf-8')}"
+                                        }
+                                    })
+                                else:
+                                    logger.error(f"Invalid additional image data type: {type(img_data)}, expected bytes")
+                            except Exception as e:
+                                logger.error(f"Error encoding additional image: {e}", exc_info=True)
                                 # Skip this image if invalid
                 
                 # Make sure we have at least one image, otherwise use standard model
@@ -610,8 +618,14 @@ async def get_conversation_context(update: Update, context: ContextTypes.DEFAULT
                 
         # If media data was extracted, add it to our list
         if media_data:
-            media_data_list.append(media_data)
-            
+            # Make sure we're adding raw bytes, not a string
+            if isinstance(media_data, bytes):
+                media_data_list.append(media_data)
+            elif isinstance(media_data, str):
+                logger.warning("Media data is a string, which will cause encoding errors. Skipping.")
+            else:
+                logger.warning(f"Unexpected media data type: {type(media_data)}. Skipping.")
+        
         # Return formatted message if it has content
         if message_content:
             # Use a more compact format for messages
@@ -724,14 +738,13 @@ async def get_conversation_context(update: Update, context: ContextTypes.DEFAULT
     return (context_text, media_data_list, has_context)
 
 async def download_telegram_file(file_id, context):
-    """Download a Telegram file and convert it to base64."""
+    """Download a Telegram file and return the raw bytes."""
     try:
         file = await context.bot.get_file(file_id)
         file_bytes = await file.download_as_bytearray()
         
-        # Convert to base64
-        base64_data = base64.b64encode(file_bytes).decode('utf-8')
-        return base64_data
+        # Return the raw bytes instead of base64 encoding
+        return bytes(file_bytes)
     except Exception as e:
         logger.error(f"Error downloading file: {e}")
         return None
@@ -879,7 +892,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             for additional_image_data in media_data_list:
                 # Skip if it's None or identical to the main image
                 if additional_image_data is not None and additional_image_data != media_data:
-                    additional_images.append(additional_image_data)
+                    # Verify it's bytes before adding
+                    if isinstance(additional_image_data, bytes):
+                        additional_images.append(additional_image_data)
+                    else:
+                        logger.warning(f"Skipping non-bytes additional image of type: {type(additional_image_data)}")
         
         # Clean up the prompt to remove bot mentions
         prompt = message_text.replace(f"@{bot_username}", "").replace(BOT_NAME, "").strip()
