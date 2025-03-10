@@ -77,7 +77,8 @@ async def generate_ai_response(
     memory_context: Optional[str] = None,
     user_profile_context: Optional[str] = None,
     media_data: Optional[bytes] = None,
-    additional_images: Optional[List[bytes]] = None
+    additional_images: Optional[List[bytes]] = None,
+    conversation_context: Optional[str] = None
 ) -> str:
     """
     Generate a response using the OpenAI API, with function calling support.
@@ -91,6 +92,7 @@ async def generate_ai_response(
         user_profile_context: User profile context
         media_data: Binary data of media (image, etc.)
         additional_images: List of additional image data to include in the context
+        conversation_context: Context from the current conversation thread
         
     Returns:
         The generated response
@@ -136,9 +138,19 @@ async def generate_ai_response(
 
         # Prepare the messages array
         messages = [
-            {"role": "system", "content": system_message},
-            {"role": "user", "content": prompt}
+            {"role": "system", "content": system_message}
         ]
+        
+        # Add conversation context if available
+        if conversation_context:
+            # Add conversation context as a separate system message for clarity
+            messages.append({
+                "role": "system", 
+                "content": f"سابقه گفتگو (رشته‌ای از پیام‌های قبلی که باید در نظر بگیری):\n{conversation_context}"
+            })
+            
+        # Add the user's current message
+        messages.append({"role": "user", "content": prompt})
 
         # Handle content based on whether we need vision
         if use_vision:
@@ -495,7 +507,7 @@ async def get_conversation_context(update: Update, context: ContextTypes.DEFAULT
     
     # Prepare the final context text
     if context_messages:
-        context_text = "سابقه گفتگو:\n" + "\n".join(context_messages)
+        context_text = "\n".join(context_messages)
     else:
         context_text = ""
     
@@ -688,7 +700,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             memory_context=memory_context,
             user_profile_context=user_profile_context,
             media_data=media_data,
-            additional_images=additional_images if additional_images else None
+            additional_images=additional_images if additional_images else None,
+            conversation_context=context_text if has_context else None
         )
         
         # Send the response
