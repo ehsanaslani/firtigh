@@ -129,8 +129,8 @@ async def generate_ai_response(
 """
 
         # Add memory context if available
-        if memory_context:
-            system_message += f"\n\nاطلاعات حافظه:\n{memory_context}"
+        # if memory_context:
+        #    system_message += f"\n\nاطلاعات حافظه:\n{memory_context}"
             
         # Add user profile context if available
         if user_profile_context:
