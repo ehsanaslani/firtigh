@@ -590,11 +590,7 @@ async def get_conversation_context(update: Update, context: ContextTypes.DEFAULT
                 
         # If media data was extracted, add it to our list
         if media_data:
-            media_data_list.append({
-                "type": media_type,
-                "data": media_data,
-                "sender": sender_name
-            })
+            media_data_list.append(media_data)
             
         # Return formatted message if it has content
         if message_content:
@@ -705,7 +701,7 @@ async def get_conversation_context(update: Update, context: ContextTypes.DEFAULT
     if not media_data_list:
         media_data_list = []
         
-    return (context_text, [data.get('data') for data in media_data_list], has_context)
+    return (context_text, media_data_list, has_context)
 
 async def download_telegram_file(file_id, context):
     """Download a Telegram file and convert it to base64."""
@@ -859,9 +855,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         # Add any additional images from the conversation context
         if media_data_list:
-            for item in media_data_list:
-                if item["data"] and item["data"] != media_data:  # Don't duplicate the main image
-                    additional_images.append(item["data"])
+            # media_data_list is already a list of binary data, not dictionaries
+            for additional_image_data in media_data_list:
+                # Skip if it's None or identical to the main image
+                if additional_image_data is not None and additional_image_data != media_data:
+                    additional_images.append(additional_image_data)
         
         # Clean up the prompt to remove bot mentions
         prompt = message_text.replace(f"@{bot_username}", "").replace(BOT_NAME, "").strip()
