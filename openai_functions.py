@@ -589,19 +589,23 @@ async def get_top_news(category: str = "general", persian_only: bool = False) ->
                 }
             },
             {
-                "name": "العربیه فارسی",
-                "url": "https://farsi.alarabiya.net/",
-                "rss": "https://farsi.alarabiya.net/fa/feed/rss/rss2.0.xml",
+                "name": "همشهری آنلاین",
+                "url": "https://www.hamshahrionline.ir/",
+                "rss": "https://www.hamshahrionline.ir/rss",
                 "category_mapping": {
-                    "general": "https://farsi.alarabiya.net/fa/feed/rss/rss2.0.xml"
+                    "general": "https://www.hamshahrionline.ir/rss",
+                    "politics": "https://www.hamshahrionline.ir/rss/tp/30",
+                    "sports": "https://www.hamshahrionline.ir/rss/tp/14"
                 }
             },
             {
-                "name": "صدای آمریکا",
-                "url": "https://www.voanews.com/persian",
-                "rss": "https://www.voanews.com/api/zyqztevyyr",
+                "name": "خبرگزاری ایسنا",
+                "url": "https://www.isna.ir/",
+                "rss": "https://www.isna.ir/rss",
                 "category_mapping": {
-                    "general": "https://www.voanews.com/api/zyqztevyyr"
+                    "general": "https://www.isna.ir/rss",
+                    "politics": "https://www.isna.ir/rss/tp/3",
+                    "sports": "https://www.isna.ir/rss/tp/14"
                 }
             },
             {
@@ -689,8 +693,8 @@ async def get_top_news(category: str = "general", persian_only: bool = False) ->
         # Combine sources based on persian_only flag
         sources = persian_sources + ([] if persian_only else international_sources)
         
-        # Fetch news from RSS feeds
-        async with aiohttp.ClientSession() as session:
+        # Fetch news from RSS feeds with timeout and proper error handling
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as session:
             tasks = []
             for source in sources:
                 # Get the appropriate RSS feed URL for the requested category
@@ -703,32 +707,110 @@ async def get_top_news(category: str = "general", persian_only: bool = False) ->
                 if rss_url:
                     tasks.append(fetch_rss_feed(session, source, rss_url))
             
-            # Gather all results
-            all_news = await asyncio.gather(*tasks)
+            # Gather all results (continue even if some fail)
+            all_news = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Process results, filtering out exceptions and failed fetches
+            flattened_news = []
+            successful_sources = []
+            failed_sources = []
+            
+            for i, source_news in enumerate(all_news):
+                if isinstance(source_news, Exception):
+                    # Log the exception and continue
+                    logger.error(f"Error fetching from {sources[i]['name']}: {source_news}")
+                    failed_sources.append(sources[i]['name'])
+                    continue
+                    
+                if source_news:
+                    flattened_news.extend(source_news)
+                    successful_sources.append(sources[i]['name'])
+                else:
+                    # No news returned, but not an exception
+                    failed_sources.append(sources[i]['name'])
         
-        # Flatten the list of news articles and filter out None values
-        flattened_news = []
-        for source_news in all_news:
-            if source_news:
-                flattened_news.extend(source_news)
-        
-        # Sort by date (most recent first)
-        flattened_news.sort(key=lambda x: x.get("published_at", ""), reverse=True)
+        # Sort by date (most recent first) and limit to a reasonable number
+        if flattened_news:
+            # Sort news, handling cases where published_at might be empty
+            def get_date_for_sorting(article):
+                try:
+                    # Try to parse the date if it exists
+                    if article.get("published_at"):
+                        return article["published_at"]
+                    return "9999"  # Default to a far future date if missing
+                except:
+                    return "9999"
+                    
+            flattened_news.sort(key=get_date_for_sorting, reverse=True)
+            
+            # Limit to 30 most recent articles
+            flattened_news = flattened_news[:30]
         
         # Format the response
-        return {
+        result = {
             "category": category,
             "timestamp": datetime.now().isoformat(),
-            "sources": [source["name"] for source in sources],
-            "articles": flattened_news[:20]  # Limit to 20 most recent articles
+            "sources": successful_sources,
+            "failed_sources": failed_sources,
+            "articles": flattened_news
         }
         
+        # Create a human-readable formatted message
+        persian_category_names = {
+            "general": "عمومی", "politics": "سیاسی", "business": "اقتصادی",
+            "technology": "فناوری", "entertainment": "سرگرمی", "sports": "ورزشی",
+            "science": "علمی", "health": "سلامت"
+        }
+        
+        category_persian = persian_category_names.get(category, "عمومی")
+        
+        # Check if we have any results
+        if not flattened_news:
+            if failed_sources and not successful_sources:
+                # All sources failed
+                result["formatted_message"] = (
+                    f"📰 **اخبار {category_persian}**\n\n"
+                    f"متأسفانه در دریافت اخبار از منابع خبری مشکلی پیش آمد. "
+                    f"لطفاً کمی بعد دوباره تلاش کنید."
+                )
+            else:
+                # No news found
+                result["formatted_message"] = (
+                    f"📰 **اخبار {category_persian}**\n\n"
+                    f"در حال حاضر خبر مهمی در این دسته‌بندی یافت نشد."
+                )
+        else:
+            # Format successful news results
+            formatted_message = f"📰 **اخبار {category_persian}** (به‌روز شده در {datetime.now().strftime('%H:%M')})\n\n"
+            
+            # Group news by source
+            news_by_source = {}
+            for article in flattened_news:
+                source = article["source"]
+                if source not in news_by_source:
+                    news_by_source[source] = []
+                news_by_source[source].append(article)
+            
+            # Format each source's news with complete URLs
+            for source, articles in news_by_source.items():
+                formatted_message += f"**{source}**:\n"
+                for article in articles[:2]:  # Limit to 2 headlines per source for readability
+                    title = article["title"]
+                    url = article.get("url", "")
+                    formatted_message += f"• {title}\n  {url}\n"
+                formatted_message += "\n"
+            
+            result["formatted_message"] = formatted_message
+        
+        return result
+        
     except Exception as e:
-        logger.error(f"Error in get_top_news: {e}")
+        logger.error(f"Error in get_top_news: {e}", exc_info=True)
         return {
             "error": str(e),
             "category": category,
-            "articles": []
+            "articles": [],
+            "formatted_message": f"متأسفانه در دریافت اخبار مشکلی پیش آمد: {str(e)}"
         }
 
 async def fetch_rss_feed(session, source, rss_url):
