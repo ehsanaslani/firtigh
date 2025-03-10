@@ -123,11 +123,23 @@ async def token_usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Generate the token usage report
         report = token_tracking.format_token_usage_report(days=days)
         
-        # Send the report
-        await update.message.reply_text(
-            f"```\n{report}\n```",
-            parse_mode=ParseMode.MARKDOWN_V2
-        )
+        # Since the report contains special characters like '.', '$', ':', etc.,
+        # which are reserved in Markdown V2, we need to escape them or use a different approach
+        
+        try:
+            # Option 1: Escape all special characters for Markdown V2
+            escaped_report = escape_markdown_v2(report)
+            await update.message.reply_text(
+                f"```\n{escaped_report}\n```",
+                parse_mode=ParseMode.MARKDOWN_V2
+            )
+        except Exception as e:
+            # Option 2: If escaping fails, send as plain text without formatting
+            logger.error(f"Error sending formatted token report: {e}")
+            await update.message.reply_text(
+                f"Token Usage Report ({days} days):\n\n{report}",
+                parse_mode=None  # No parsing, just plain text
+            )
     else:
         # Not authorized
         await update.message.reply_text(
@@ -137,21 +149,30 @@ async def token_usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def token_optimize_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show information about token usage optimizations."""
-    optimize_text = """✅ **بهینه‌سازی مصرف توکن**
+    optimize_text = """✅ *بهینه‌سازی مصرف توکن*
 
 ربات از چندین روش برای کاهش مصرف توکن استفاده می‌کند:
 
-1️⃣ **پیام سیستمی مختصر**: کاهش طول دستورالعمل‌های راهنما
-2️⃣ **طبقه‌بندی پیام‌ها**: پرس‌وجوهای ساده زمینه غیرضروری را بارگذاری نمی‌کنند
-3️⃣ **انتخاب پویای توابع**: فقط توابع مرتبط با هر درخواست ارسال می‌شوند
-4️⃣ **محدودیت زمینه**: تاریخچه مکالمه کوتاه می‌شود
-5️⃣ **فشرده‌سازی پروفایل**: پروفایل‌های کاربر خلاصه می‌شوند
+1️⃣ *پیام سیستمی مختصر*: کاهش طول دستورالعمل‌های راهنما
+2️⃣ *طبقه‌بندی پیام‌ها*: پرس‌وجوهای ساده زمینه غیرضروری را بارگذاری نمی‌کنند
+3️⃣ *انتخاب پویای توابع*: فقط توابع مرتبط با هر درخواست ارسال می‌شوند
+4️⃣ *محدودیت زمینه*: تاریخچه مکالمه کوتاه می‌شود
+5️⃣ *فشرده‌سازی پروفایل*: پروفایل‌های کاربر خلاصه می‌شوند
 
 این بهینه‌سازی‌ها مصرف توکن را تا ۹۰٪ کاهش داده‌اند!
 
 اطلاعات بیشتر: فایل README_TokenOptimization.md
 """
-    await update.message.reply_text(optimize_text, parse_mode=ParseMode.MARKDOWN)
+    # Note: We're using ParseMode.MARKDOWN (not V2) which has less strict escape requirements
+    # but is also less powerful. This is OK for this simple formatting.
+    try:
+        await update.message.reply_text(optimize_text, parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        # If Markdown parsing fails for some reason, fall back to plain text
+        logger.error(f"Error sending formatted token optimization info: {e}")
+        # Strip markdown symbols for plain text
+        plain_text = optimize_text.replace('*', '').replace('_', '')
+        await update.message.reply_text(plain_text, parse_mode=None)
 
 async def generate_ai_response(
     prompt: str,
