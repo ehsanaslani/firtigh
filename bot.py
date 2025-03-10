@@ -98,7 +98,8 @@ async def generate_ai_response(
     try:
         # Get memory context if not provided
         if not memory_context and chat_id:
-            memory_context = await memory.get_relevant_memory(chat_id, prompt, limit=5)
+            # Remove the limit parameter to be compatible with the deployed version
+            memory_context = await memory.get_relevant_memory(chat_id, prompt)
             
         # Get user profile context if not provided
         if not user_profile_context and chat_id and user_id:
@@ -664,7 +665,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Get memory context
         memory_context = await memory.get_relevant_memory(chat_id, prompt)
         if memory_context:
-            memory.add_to_memory(chat_id, prompt, user_id, message.from_user.first_name if message.from_user else "User")
+            # Use the process_message_for_memory function instead of add_to_memory
+            message_data = {
+                "message_id": message.message_id,
+                "chat_id": chat_id,
+                "sender_id": user_id,
+                "sender_name": message.from_user.username or message.from_user.first_name if message.from_user else "Unknown",
+                "text": prompt,
+                "date": time.time()
+            }
+            # Process the message in the background
+            asyncio.create_task(memory.process_message_for_memory(message_data))
             
         # Get user profile context
         user_profile_context = memory.get_user_profile_context(chat_id, user_id) if user_id else None
@@ -696,8 +707,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             'is_bot_message': True
         })
         
-        # Add the bot's response to memory
-        memory.add_to_memory(chat_id, response, context.bot.id, bot_username, message_type="bot_response")
+        # Store the bot's response in memory
+        # Instead of using add_to_memory, use process_message_for_memory
+        bot_message_data = {
+            "message_id": sent_message.message_id,
+            "chat_id": chat_id,
+            "sender_id": context.bot.id,
+            "sender_name": bot_username,
+            "text": response,
+            "date": time.time(),
+            "is_bot_message": True  # Mark as bot message
+        }
+        # Process the bot's response in the background
+        asyncio.create_task(memory.process_message_for_memory(bot_message_data))
 
 def main() -> None:
     """Start the bot."""

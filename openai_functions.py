@@ -160,73 +160,28 @@ async def search_web(query: str, is_news: bool = False) -> Dict[str, Any]:
     try:
         logger.info(f"Searching web for: {query} (is_news={is_news})")
         
-        # Call the web search function (using your web_search implementation)
-        # Make sure web_search is properly imported and initialized
-        if not hasattr(web_search, "search_web"):
-            # Fallback if web_search module is not properly set up
-            raise ImportError("Web search module not properly configured")
+        # Dynamically import web_search to avoid circular imports
+        try:
+            import web_search
             
-        search_results = await web_search.search_web(query, is_news)
-        
-        # Format and extract relevant information
-        results = []
-        
-        if not search_results or not isinstance(search_results, list):
-            # Handle empty or invalid results
+            # Call the web search function with the query
+            search_results = await web_search.search_web(query, is_news)
+            
+            # Return the results in the expected format
+            return search_results
+            
+        except ImportError:
+            logger.error("Failed to import web_search module")
             return {
-                "results": [],
-                "query": query,
-                "is_news": is_news,
-                "formatted_message": f"برای جستجوی '{query}' نتیجه‌ای یافت نشد."
+                "error": "Web search module not available",
+                "message": "متأسفانه در حال حاضر امکان جستجوی وب وجود ندارد."
             }
-        
-        # Process the results
-        for result in search_results[:5]:  # Limit to top 5 results
-            if isinstance(result, dict):
-                results.append({
-                    "title": result.get("title", "بدون عنوان"),
-                    "snippet": result.get("snippet", "توضیحات در دسترس نیست."),
-                    "url": result.get("link", "")
-                })
-            else:
-                # Skip non-dictionary results
-                continue
-        
-        # Create a formatted message for display
-        formatted_message = f"🔍 **نتایج جستجو برای: {query}**\n\n"
-        
-        if not results:
-            formatted_message += "متأسفانه نتیجه‌ای یافت نشد."
-        else:
-            for i, result in enumerate(results, 1):
-                formatted_message += f"{i}. **{result['title']}**\n"
-                formatted_message += f"{result['snippet']}\n"
-                formatted_message += f"🔗 {result['url']}\n\n"
-        
-        return {
-            "results": results,
-            "query": query,
-            "is_news": is_news,
-            "formatted_message": formatted_message
-        }
-        
-    except ImportError as ie:
-        logger.error(f"Import error in search_web: {ie}")
-        return {
-            "error": "جستجوی وب پیکربندی نشده است.",
-            "query": query,
-            "is_news": is_news,
-            "results": [],
-            "formatted_message": "متأسفانه در حال حاضر امکان جستجوی وب فراهم نیست. لطفاً با پشتیبانی تماس بگیرید."
-        }
+            
     except Exception as e:
-        logger.error(f"Error in search_web: {e}", exc_info=True)
+        logger.error(f"Error in search_web: {str(e)}", exc_info=True)
         return {
             "error": str(e),
-            "query": query,
-            "is_news": is_news,
-            "results": [],
-            "formatted_message": f"متأسفانه در جستجوی وب برای '{query}' مشکلی پیش آمد: {str(e)}"
+            "message": f"خطا در جستجوی '{query}': {str(e)}"
         }
 
 async def extract_content_from_url(url: str) -> Dict[str, Any]:
@@ -240,62 +195,47 @@ async def extract_content_from_url(url: str) -> Dict[str, Any]:
         A dictionary with the extracted content
     """
     try:
-        # Log the extraction request
         logger.info(f"Extracting content from URL: {url}")
         
-        # Validate URL format
-        if not url.startswith(('http://', 'https://')):
+        # Clean up URL if needed
+        url = url.strip()
+        if not (url.startswith('http://') or url.startswith('https://')):
+            url = 'https://' + url
+            
+        # Dynamically import web_extractor to avoid circular imports
+        try:
+            import web_extractor
+            
+            # Extract content from the URL
+            content = await web_extractor.extract_content_from_url(url)
+            
+            if content:
+                # Create a preview of the content for display
+                preview = content[:300] + "..." if len(content) > 300 else content
+                
+                return {
+                    "content": content,
+                    "url": url,
+                    "message": f"📄 **محتوای استخراج‌شده از آدرس:**\n\n{preview}\n\n🔗 [مشاهده منبع اصلی]({url})"
+                }
+            else:
+                return {
+                    "error": "No content extracted",
+                    "message": f"متأسفانه نتوانستم محتوایی از {url} استخراج کنم."
+                }
+                
+        except ImportError:
+            logger.error("Failed to import web_extractor module")
             return {
-                "error": "URL format invalid",
-                "url": url,
-                "formatted_message": f"فرمت آدرس وب نامعتبر است. لطفاً آدرس را با http:// یا https:// شروع کنید."
+                "error": "Web extractor module not available",
+                "message": "متأسفانه در حال حاضر امکان استخراج محتوا از آدرس‌های اینترنتی وجود ندارد."
             }
-        
-        # Check if web_extractor is properly configured
-        if not hasattr(web_extractor, "extract_content_from_url"):
-            raise ImportError("Web extraction module not properly configured")
-        
-        # Extract content from the URL
-        title, content = await web_extractor.extract_content_from_url(url)
-        
-        if title == "Error" or not content:
-            return {
-                "error": "Failed to extract content",
-                "url": url,
-                "formatted_message": f"نمی‌توانم محتوا را از این آدرس استخراج کنم: {url}\n\n{content}"
-            }
-        
-        # Create a nicely formatted message
-        formatted_message = f"📄 **{title}**\n\n"
-        
-        # Truncate content if it's too long for display
-        display_content = content
-        if len(content) > 1500:
-            display_content = content[:1500] + "...\n\n(محتوا بسیار طولانی است و خلاصه شده است)"
-        
-        formatted_message += display_content
-        formatted_message += f"\n\n🔗 [منبع]({url})"
-        
-        return {
-            "title": title,
-            "content": content,
-            "url": url,
-            "formatted_message": formatted_message
-        }
-        
-    except ImportError as ie:
-        logger.error(f"Import error in extract_content_from_url: {ie}")
-        return {
-            "error": "استخراج محتوا از وب پیکربندی نشده است.",
-            "url": url,
-            "formatted_message": "متأسفانه در حال حاضر امکان استخراج محتوا از وب فراهم نیست. لطفاً با پشتیبانی تماس بگیرید."
-        }
+            
     except Exception as e:
-        logger.error(f"Error in extract_content_from_url: {e}", exc_info=True)
+        logger.error(f"Error in extract_content_from_url: {str(e)}", exc_info=True)
         return {
             "error": str(e),
-            "url": url,
-            "formatted_message": f"متأسفانه در استخراج محتوا از آدرس {url} مشکلی پیش آمد: {str(e)}"
+            "message": f"خطا در استخراج محتوا از {url}: {str(e)}"
         }
 
 async def get_chat_history(days: int, chat_id: int) -> Dict[str, Any]:
@@ -367,7 +307,8 @@ async def process_function_calls(response_message, chat_id: Optional[int] = None
         # Return the formatted message result
         if "message" in result:
             return result["message"]
-        elif "formatted_message" in result:  # For backward compatibility
+        # For backward compatibility with older versions
+        elif "formatted_message" in result:
             return result["formatted_message"]
         elif "error" in result:
             return f"خطا: {result['error']}"
@@ -436,39 +377,47 @@ async def execute_function(function_name: str, function_args: dict, chat_id: Opt
             # Get is_news flag, default to False if not provided
             is_news = function_args.get("is_news", False)
             
-            # Import the web_search module dynamically to avoid circular imports
-            import web_search
+            # Call the search_web function from this module
+            search_results = await search_web(query, is_news)
             
-            # Call the web search function and return the results
-            try:
-                search_results = await web_search.search_web(query, is_news)
+            # If there's a message field already, use it
+            if "message" in search_results:
+                return search_results
                 
-                # The search_web function now returns a dict with a formatted message
-                # Ensure we return it in the expected format
-                if "message" in search_results:
-                    return {
-                        "results": search_results.get("results", []),
-                        "message": search_results.get("message", "")
-                    }
+            # For backward compatibility with different return formats
+            if "formatted_message" in search_results:
+                search_results["message"] = search_results["formatted_message"]
+                return search_results
+                
+            # Handle the case where we have results directly from web_search module
+            if "results" in search_results:
+                results = search_results["results"]
+                message = f"🔍 نتایج جستجو برای '{query}':\n\n"
+                
+                if not results:
+                    message += "متأسفانه نتیجه‌ای یافت نشد."
                 else:
-                    # Fall back to formatting the message ourselves if needed
-                    message = f"🔍 نتایج جستجو برای '{query}':\n\n"
-                    for i, result in enumerate(search_results.get("results", []), 1):
+                    for i, result in enumerate(results, 1):
                         title = result.get("title", "").strip()
                         snippet = result.get("snippet", "").strip()
                         link = result.get("link", "").strip()
                         message += f"**{i}. {title}**\n{snippet}\n🔗 {link}\n\n"
-                    
-                    return {
-                        "results": search_results.get("results", []),
-                        "message": message
-                    }
-            except Exception as e:
-                logger.error(f"Error in search_web function: {e}")
+                
+                search_results["message"] = message
+                return search_results
+            
+            # If no recognized format, create a generic error message
+            if "error" in search_results:
                 return {
-                    "error": f"خطا در جستجو: {str(e)}",
-                    "message": "متأسفانه جستجو با مشکل مواجه شد. ممکن است اشکالی در اتصال به سرویس‌های جستجو وجود داشته باشد."
+                    "error": search_results.get("error", "خطای نامشخص"),
+                    "message": f"خطا در جستجو: {search_results.get('error', 'خطای نامشخص')}"
                 }
+            
+            # Generic fallback
+            return {
+                "error": "فرمت پاسخ نامشخص",
+                "message": "جستجو انجام شد، اما نتایج به فرمت قابل فهم نیست."
+            }
                 
         elif function_name == "extract_content_from_url":
             # Validate URL
@@ -479,48 +428,39 @@ async def execute_function(function_name: str, function_args: dict, chat_id: Opt
                     "message": "لطفاً یک آدرس اینترنتی (URL) معتبر وارد کنید."
                 }
                 
-            # Fix URL if it doesn't start with http:// or https://
-            if not url.startswith(("http://", "https://")):
-                url = "https://" + url
-                logger.info(f"Fixed URL format: {url}")
+            # Call the extract_content_from_url function from this module
+            result = await extract_content_from_url(url)
+            
+            # If there's a message field already, use it
+            if "message" in result:
+                return result
                 
-            # Import the web_extractor module dynamically
-            try:
-                import web_extractor
+            # For backward compatibility with different return formats
+            if "formatted_message" in result:
+                result["message"] = result["formatted_message"]
+                return result
                 
-                # Extract content from the URL
-                content = await web_extractor.extract_content_from_url(url)
-                if not content:
-                    return {
-                        "error": "محتوایی از این آدرس استخراج نشد.",
-                        "message": f"من نتوانستم محتوایی از آدرس {url} استخراج کنم. ممکن است این آدرس قابل دسترسی نباشد یا محتوای قابل استخراجی نداشته باشد."
-                    }
-                
-                # Truncate content if it's too long for display
-                preview_content = content
-                if len(content) > 300:
-                    preview_content = content[:300] + "..."
-                
-                # Format the response message
-                message = f"📄 **محتوای استخراج‌شده از آدرس:**\n\n{preview_content}\n\n🔗 [مشاهده منبع اصلی]({url})"
-                
+            # Handle error cases
+            if "error" in result:
                 return {
-                    "content": content,
-                    "url": url,
-                    "message": message
+                    "error": result.get("error", "خطای نامشخص"),
+                    "message": f"خطا در استخراج محتوا: {result.get('error', 'خطای نامشخص')}"
                 }
-            except ImportError:
-                logger.error("web_extractor module not found")
-                return {
-                    "error": "ماژول استخراج محتوا پیدا نشد.",
-                    "message": "متأسفانه در حال حاضر امکان استخراج محتوا از آدرس‌های اینترنتی وجود ندارد."
-                }
-            except Exception as e:
-                logger.error(f"Error extracting content from URL: {e}")
-                return {
-                    "error": f"خطا در استخراج محتوا: {str(e)}",
-                    "message": f"متأسفانه نتوانستم محتوای آدرس {url} را استخراج کنم. ممکن است آدرس معتبر نباشد یا دسترسی به آن با مشکل مواجه باشد."
-                }
+                
+            # Handle the case where we have content but no formatted message
+            if "content" in result:
+                content = result["content"]
+                preview = content[:300] + "..." if len(content) > 300 else content
+                message = f"📄 **محتوای استخراج‌شده از آدرس:**\n\n{preview}\n\n🔗 [مشاهده منبع اصلی]({url})"
+                
+                result["message"] = message
+                return result
+                
+            # Generic fallback
+            return {
+                "error": "فرمت پاسخ نامشخص",
+                "message": "استخراج محتوا انجام شد، اما نتایج به فرمت قابل فهم نیست."
+            }
                 
         elif function_name == "get_chat_history":
             days = function_args.get("days", 1)
@@ -533,13 +473,33 @@ async def execute_function(function_name: str, function_args: dict, chat_id: Opt
                 }
                 
             # Import the memory module dynamically
-            import memory
-            
             try:
-                history = await memory.get_chat_history_summary(chat_id_param, days)
+                import memory
+                
+                # Call the get_chat_history_summary function if it exists
+                if hasattr(memory, "get_chat_history_summary"):
+                    history = await memory.get_chat_history_summary(chat_id_param, days)
+                    return {
+                        "history": history,
+                        "message": history
+                    }
+                # For compatibility with older versions that might have different function names
+                elif hasattr(memory, "summarize_chat_history"):
+                    history = await memory.summarize_chat_history(chat_id_param, days)
+                    return {
+                        "history": history,
+                        "message": history
+                    }
+                else:
+                    return {
+                        "error": "تابع خلاصه تاریخچه گفتگو پیدا نشد.",
+                        "message": "متأسفانه امکان دریافت تاریخچه گفتگو در حال حاضر وجود ندارد."
+                    }
+            except ImportError:
+                logger.error("Failed to import memory module")
                 return {
-                    "history": history,
-                    "message": history
+                    "error": "ماژول حافظه پیدا نشد.",
+                    "message": "متأسفانه در حال حاضر امکان دریافت تاریخچه گفتگو وجود ندارد."
                 }
             except Exception as e:
                 logger.error(f"Error getting chat history: {e}")
