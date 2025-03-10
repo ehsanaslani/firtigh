@@ -655,4 +655,36 @@ def analyze_for_name_correction(message_text: str) -> Optional[Dict[str, str]]:
     
     except Exception as e:
         logger.error(f"Error analyzing for name correction: {e}")
-        return None 
+        return None
+
+async def get_relevant_memory(chat_id: int, query: str) -> str:
+    """
+    Get relevant memory items based on the query.
+    
+    Args:
+        chat_id: The chat ID to get memory for
+        query: The query to find relevant memory items
+        
+    Returns:
+        A formatted string with relevant memory context
+    """
+    memory_items = get_group_memory(chat_id)
+    if memory_items:
+        return format_memory_for_context(memory_items)
+    return ""
+
+def get_user_profile_context(chat_id: int, user_id: int) -> str:
+    """
+    Get user profile context for the given user.
+    
+    Args:
+        chat_id: The chat ID
+        user_id: The user ID
+        
+    Returns:
+        A formatted string with user profile context
+    """
+    user_profile = get_user_profile(user_id)
+    if user_profile:
+        return format_user_profile_for_context(user_profile)
+    return "" 

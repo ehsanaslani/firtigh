@@ -34,7 +34,6 @@
 - **Web Search**: Can search the web for real-time information
 - **Link Analysis**: Extracts and summarizes content from shared links
 - **News Aggregation**: Can compile news from top Persian news sites
-- **Exchange Rates**: Provides up-to-date currency exchange rates to Iranian Rial/Toman
 - **Weather Information**: Can retrieve weather information
 - **Image Understanding**: Can analyze and understand images and animated GIFs
 
@@ -43,6 +42,7 @@
 - **Thread Context**: Understands context in reply threads
 - **Instruction Following**: Can accept and remember instructions from users
 - **Markdown Formatting**: Uses proper formatting for better readability
+- **Function Calling**: Uses OpenAI's function calling to determine when to search the web or extract content
 
 ## Technical Details
 
@@ -59,7 +59,6 @@
 - **Web Search**: "@firtigh جستجو کن قیمت طلا" (Search for gold prices)
 - **Group Memory**: "@firtigh خلاصه گفتگوهای سه روز اخیر" (Summarize conversations from the last three days)
 - **News**: "@firtigh اخبار امروز چیه؟" (What's the news today?)
-- **Exchange Rates**: "@firtigh قیمت دلار چنده؟" (What's the dollar exchange rate?)
 - **Image Analysis**: Reply to an image with "@firtigh این چیه؟" (What is this?)
 - **Instructions**: "@firtigh از این به بعد من رو علی صدا کن" (From now on call me Ali)
 - **Discussions**: Can join and participate in group discussions naturally

@@ -21,5 +21,4 @@ GOOGLE_SEARCH_ENGINE_ID = os.environ.get("GOOGLE_SEARCH_ENGINE_ID")
 
 # Usage limits
 DAILY_SEARCH_LIMIT = int(os.environ.get("DAILY_SEARCH_LIMIT", 50))
-DAILY_MEDIA_LIMIT = int(os.environ.get("DAILY_MEDIA_LIMIT", 10))
-DAILY_IMAGE_GEN_LIMIT = int(os.environ.get("DAILY_IMAGE_GEN_LIMIT", 3)) 
+DAILY_MEDIA_LIMIT = int(os.environ.get("DAILY_MEDIA_LIMIT", 10)) 

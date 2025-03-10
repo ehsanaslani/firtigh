@@ -92,67 +92,13 @@ class TestWebExtractor(unittest.TestCase):
     
     def test_is_valid_url(self):
         """Test URL validation."""
-        # Valid URLs
         self.assertTrue(web_extractor.is_valid_url("https://example.com"))
-        self.assertTrue(web_extractor.is_valid_url("http://sub.domain.org/path?query=test"))
-        
-        # Invalid URLs
+        self.assertTrue(web_extractor.is_valid_url("http://subdomain.example.com/path?query=value"))
         self.assertFalse(web_extractor.is_valid_url("not a url"))
         self.assertFalse(web_extractor.is_valid_url("example.com"))  # Missing scheme
         self.assertFalse(web_extractor.is_valid_url("https://"))  # Missing domain
     
-    @patch("web_extractor.extract_content_from_url")
-    def test_process_message_links_with_valid_urls(self, mock_extract):
-        """Test processing message with valid URLs."""
-        # Set up the mock
-        async def mock_extract_impl(url):
-            return "Test Page", "This is the content of the test page."
-        
-        mock_extract.side_effect = mock_extract_impl
-        
-        # Message with URL
-        message = "Check out this link: https://example.com"
-        
-        # Call the function
-        result = self.run_async(web_extractor.process_message_links(message))
-        
-        # Check the result
-        self.assertIsNotNone(result)
-        self.assertIn("Test Page", result)
-        self.assertIn("content of the test page", result)
-        self.assertIn("محتوای لینک‌های ارسالی", result)  # Should include Persian header
-    
-    def test_process_message_links_no_urls(self):
-        """Test processing message with no URLs."""
-        # Message without URL
-        message = "This message has no links in it."
-        
-        # Call the function
-        result = self.run_async(web_extractor.process_message_links(message))
-        
-        # Check the result - should be an empty string, not None
-        self.assertEqual(result, "")
-    
-    @patch("web_extractor.extract_content_from_url")
-    def test_process_message_links_extraction_error(self, mock_extract):
-        """Test handling of extraction errors."""
-        # Set up the mock to return an error
-        async def mock_extract_impl(url):
-            return "Error", "Could not extract content from URL."
-        
-        mock_extract.side_effect = mock_extract_impl
-        
-        # Message with URL
-        message = "Check out this link: https://example.com"
-        
-        # Call the function
-        result = self.run_async(web_extractor.process_message_links(message))
-        
-        # In our implementation, "Error" doesn't get filtered out
-        # Check the result contains the error message
-        self.assertIsNotNone(result)
-        self.assertIn("Error", result)
-        self.assertIn("Could not extract content", result)
+    # The following tests for process_message_links have been removed as the function is no longer used
 
 if __name__ == "__main__":
     unittest.main() 

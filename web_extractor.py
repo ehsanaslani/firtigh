@@ -101,41 +101,4 @@ def is_valid_url(url: str) -> bool:
     except Exception:
         return False
 
-async def process_message_links(message_text: str) -> str:
-    """
-    Automatically extract and process all links in a message.
-    
-    Args:
-        message_text: The message text to process
-        
-    Returns:
-        Formatted string with extracted content from all links
-    """
-    if not message_text:
-        return ""
-        
-    urls = extract_urls(message_text)
-    
-    if not urls:
-        return ""
-    
-    results = []
-    
-    for url in urls:
-        try:
-            if not is_valid_url(url):
-                continue
-                
-            title, content = await extract_content_from_url(url)
-            
-            # Add the extracted information to results
-            results.append(f"📄 **{title}**\n{url}\n\n{content[:500]}...\n")
-        except Exception as e:
-            logger.error(f"Error processing link {url}: {e}")
-            results.append(f"❌ Failed to process {url}: {str(e)}")
-    
-    if not results:
-        return ""
-    
-    # Combine all results into a formatted string
-    return "محتوای لینک‌های ارسالی:\n\n" + "\n---\n".join(results) 
+# The process_message_links function is removed as it's no longer used in the function calling approach 

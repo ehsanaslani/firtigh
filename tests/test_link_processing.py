@@ -103,21 +103,4 @@ def test_handling_invalid_urls(mock_get):
     assert "Error" in title
     assert "Could not extract content" in content
 
-@patch('web_extractor.extract_content_from_url')
-def test_process_message_links(mock_extract):
-    """Test the full process_message_links function."""
-    # Set up the mock to return title and content
-    mock_extract.return_value = ("Test Page", "This is the extracted content from the page.")
-    
-    # Process a message with links
-    message_text = "Check out this link: https://example.com"
-    result = run_async(web_extractor.process_message_links(message_text))
-    
-    # Verify the result format
-    assert "محتوای لینک‌های ارسالی" in result
-    assert "Test Page" in result
-    assert "https://example.com" in result
-    assert "extracted content" in result
-    
-    # Verify the function was called with the correct URL
-    mock_extract.assert_called_once_with("https://example.com") 
+# The test_process_message_links function is removed as it was testing a function that has been removed 

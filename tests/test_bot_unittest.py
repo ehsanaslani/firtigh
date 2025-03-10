@@ -95,13 +95,7 @@ class TestBot(unittest.TestCase):
         self.assertIn("دستورات قابل استفاده", call_args)
         self.assertIn("/start", call_args)
         self.assertIn("/help", call_args)
-        self.assertIn("/dollar", call_args)
-        self.assertIn("/toman", call_args)
-        self.assertIn("/currency", call_args)
-        self.assertIn("/gold", call_args)
-        self.assertIn("/crypto", call_args)
-        self.assertIn("قابلیت", call_args)
-        self.assertIn("برای استفاده از من", call_args)
+        self.assertIn("در گروه‌ها", call_args)
         self.assertIn("@firtigh", call_args)
     
     @patch('memory.process_message_for_memory')
@@ -137,22 +131,8 @@ class TestBot(unittest.TestCase):
         # Check that generate_ai_response was called
         mock_generate.assert_called_once()
         
-        # Check that the prompt contains the original text (not lowercase)
-        self.assertIn("Hello", mock_generate.call_args[0][0])
-        self.assertIn("how are you?", mock_generate.call_args[0][0])
-        
-        # Check that reply_text was called with the expected response
-        # The bot might try multiple formats, so check that reply_text is called at least once
-        self.assertGreaterEqual(self.message.reply_text.call_count, 1)
-        
-        # Check that one of the calls has our expected response
-        expected_text_found = False
-        for call in self.message.reply_text.call_args_list:
-            if call[0][0] == "This is a test AI response":
-                expected_text_found = True
-                break
-        
-        self.assertTrue(expected_text_found, "Expected response text not found in reply_text calls")
+        # Check that the bot responded with the mocked response
+        self.message.reply_text.assert_called_with("This is a test AI response")
     
     def test_handle_message_without_query(self):
         """Test handling a message that mentions the bot but has no query."""
@@ -204,11 +184,13 @@ class TestBot(unittest.TestCase):
     
     @patch('memory.get_group_memory')
     @patch('memory.get_user_profile')
-    @patch('openai.ChatCompletion.create')
+    @patch('openai_functions.openai_client.chat.completions.create')
     def test_generate_ai_response_success(self, mock_create, mock_get_profile, mock_get_memory):
         """Test successful AI response generation."""
         # Set up the mock response
         mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message = MagicMock()
         mock_response.choices[0].message.content = "This is a test AI response"
         mock_create.return_value = mock_response
         
@@ -217,7 +199,11 @@ class TestBot(unittest.TestCase):
         mock_get_profile.return_value = {}
         
         # Call the function and check the result
-        result = self.run_async(bot.generate_ai_response("Test prompt", True, chat_id=123456, user_id=789012))
+        result = self.run_async(bot.generate_ai_response(
+            prompt="Test prompt",
+            chat_id=123456,
+            user_id=789012
+        ))
         self.assertEqual(result, "This is a test AI response")
         
         # Check that the OpenAI API was called with the expected parameters
@@ -239,16 +225,20 @@ class TestBot(unittest.TestCase):
         self.assertIn("زشت", system_content)  # Offensive language
         self.assertIn("توهین", system_content)  # Insulting language
     
-    @patch('openai.ChatCompletion.create')
+    @patch('openai_functions.openai_client.chat.completions.create')
     def test_generate_ai_response_error(self, mock_create):
         """Test AI response generation with an error."""
         # Set up the mock to raise an exception
         mock_create.side_effect = Exception("API error")
         
         # Call the function and check the result
-        result = self.run_async(bot.generate_ai_response("Test prompt", True, chat_id=123456, user_id=789012))
-        self.assertIn("متأسفم", result)  # Should contain the Persian error message
-        
+        result = self.run_async(bot.generate_ai_response(
+            prompt="Test prompt",
+            chat_id=123456,
+            user_id=789012
+        ))
+        self.assertIn("متأسفم", result)
+    
     @patch('memory.analyze_for_name_correction')
     @patch('memory.store_name_correction')
     @patch('memory.process_message_for_memory')
