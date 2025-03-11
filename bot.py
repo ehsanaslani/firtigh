@@ -296,7 +296,7 @@ async def generate_ai_response(
                                         }
                                     })
                                 else:
-                                    logger.error(f"Invalid additional image data type: {type(img_data)}, expected bytes")
+                                    logger.warning(f"Skipping non-bytes additional image of type: {type(img_data)}")
                             except Exception as e:
                                 logger.error(f"Error encoding additional image: {e}", exc_info=True)
                                 # Skip this image if invalid
@@ -895,7 +895,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     # Verify it's bytes before adding
                     if isinstance(additional_image_data, bytes):
                         additional_images.append(additional_image_data)
-        else:
+                    else:
                         logger.warning(f"Skipping non-bytes additional image of type: {type(additional_image_data)}")
         
         # Clean up the prompt to remove bot mentions
