@@ -646,18 +646,18 @@ async def get_conversation_context(update: Update, context: ContextTypes.DEFAULT
         main_chain_messages.append(msg_text)
     
     # Process the entire reply chain
-        while current_message and current_message.reply_to_message and current_depth < depth:
-            current_depth += 1
-            replied_to = current_message.reply_to_message
-            
+    while current_message and current_message.reply_to_message and current_depth < depth:
+        current_depth += 1
+        replied_to = current_message.reply_to_message
+        
         # Get sender info for the replied-to message
-            sender_name = "someone"
-            if replied_to.from_user:
-                if replied_to.from_user.username:
-                    sender_name = f"@{replied_to.from_user.username}"
-                elif replied_to.from_user.first_name:
-                    sender_name = replied_to.from_user.first_name
-            
+        sender_name = "someone"
+        if replied_to.from_user:
+            if replied_to.from_user.username:
+                sender_name = f"@{replied_to.from_user.username}"
+            elif replied_to.from_user.first_name:
+                sender_name = replied_to.from_user.first_name
+        
         # Process this message in the reply chain
         msg_text = await process_message(replied_to, sender_name)
         if msg_text:
