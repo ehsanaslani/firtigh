@@ -11,7 +11,7 @@ from typing import List, Optional
 from datetime import datetime
 
 # Third-party imports
-from telegram import Update, ChatType
+from telegram import Update
 from telegram.constants import ParseMode, ChatAction
 from telegram.ext import (
     ApplicationBuilder, 
@@ -26,9 +26,6 @@ from dotenv import load_dotenv
 
 # Import custom modules
 import config
-import memory
-import database
-import token_tracking
 
 # Load environment variables from .env file
 load_dotenv()
@@ -52,8 +49,28 @@ BOT_DESCRIPTION = "یک بات هوشمند برای کمک به گروه‌ها
 OPENAI_MODEL_DEFAULT = config.OPENAI_MODEL_DEFAULT
 OPENAI_MODEL_VISION = config.OPENAI_MODEL_VISION
 
+# Local module imports
+try:
+    import memory
+    from token_tracking import track_api_usage
+    MEMORY_AVAILABLE = True
+except ImportError:
+    logger.warning("Memory module not available. Running without memory capabilities.")
+    MEMORY_AVAILABLE = False
+
+try:
+    import token_tracking
+except ImportError:
+    logger.warning("Token tracking module not available. Running without token tracking.")
+    
 # Import from openai_functions after setting up compatibility
 import openai_functions
+
+# Chat types as constants for compatibility with older versions
+CHAT_TYPE_PRIVATE = 'private'
+CHAT_TYPE_GROUP = 'group'
+CHAT_TYPE_SUPERGROUP = 'supergroup'
+CHAT_TYPE_CHANNEL = 'channel'
 
 # Track token usage (replaced with token_tracking module)
 def log_token_usage(response, model, request_type):
@@ -214,12 +231,20 @@ async def generate_ai_response(
         needs_full_context = not (is_greeting and is_short_query)
         
         # Get memory context if not provided and needed
-        if not memory_context and chat_id and needs_full_context:
-            memory_context = await memory.get_relevant_memory(chat_id, prompt)
+        if not memory_context and chat_id and needs_full_context and MEMORY_AVAILABLE:
+            try:
+                memory_context = await memory.get_relevant_memory(chat_id, prompt)
+            except Exception as e:
+                logger.error(f"Error getting relevant memory: {e}")
+                memory_context = None
             
         # Get user profile context if not provided and needed
-        if not user_profile_context and chat_id and user_id and needs_full_context:
-            user_profile_context = memory.get_user_profile_context(chat_id, user_id)
+        if not user_profile_context and chat_id and user_id and needs_full_context and MEMORY_AVAILABLE:
+            try:
+                user_profile_context = memory.get_user_profile_context(chat_id, user_id)
+            except Exception as e:
+                logger.error(f"Error getting user profile context: {e}")
+                user_profile_context = None
         
         # Get conversation context from memory if not provided
         if not conversation_context and needs_full_context:
@@ -244,16 +269,22 @@ async def generate_ai_response(
             
         # Add user profile context if available and needed (in compressed form)
         if user_profile_context and needs_full_context:
-            # Compress user profile to include only essential information
-            compressed_profile = compress_user_profile(user_profile_context)
-            system_message += f"\n\nپروفایل کاربر: {compressed_profile}"
-            
-            # Check if there's a corrected name in the user profile
-            if "نام صحیح:" in compressed_profile:
-                # Extract corrected name from profile for emphasis
-                corrected_name_match = re.search(r"نام صحیح: ([^\n]+)", compressed_profile)
-                if corrected_name_match:
-                    system_message += f"\n\nحتماً از نام صحیح کاربر استفاده کن: {corrected_name_match.group(1)}"
+            try:
+                # Compress user profile to include only essential information
+                compressed_profile = compress_user_profile(user_profile_context)
+                system_message += f"\n\nپروفایل کاربر: {compressed_profile}"
+                
+                # Check if there's a corrected name in the user profile
+                if "نام صحیح:" in compressed_profile:
+                    try:
+                        # Extract corrected name from profile for emphasis
+                        corrected_name_match = re.search(r"نام صحیح: ([^\n]+)", compressed_profile)
+                        if corrected_name_match:
+                            system_message += f"\n\nحتماً از نام صحیح کاربر استفاده کن: {corrected_name_match.group(1)}"
+                    except Exception as e:
+                        logger.error(f"Error extracting corrected name from profile: {e}")
+            except Exception as e:
+                logger.error(f"Error processing user profile: {e}")
 
         # Prepare the messages array
         messages = [
@@ -928,7 +959,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     """
     Handle incoming messages, analyze them for memory, and generate a response.
     """
-    if update.effective_chat.type == ChatType.PRIVATE:
+    if update.effective_chat.type == CHAT_TYPE_PRIVATE:
         chat_id = update.effective_chat.id
     else:
         chat_id = update.effective_chat.id
@@ -980,13 +1011,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         context.chat_data['user_data'][user_id]['corrected_name'] = corrected_name
         logger.info(f"Stored corrected name for user {user_id}: {corrected_name}")
         
-        # Also add to memory for long-term storage
-        await memory.add_user_memory(
-            chat_id=chat_id,
-            user_id=user_id,
-            key="نام صحیح",
-            value=corrected_name
-        )
+        # Also store in memory - using a try/except in case the memory API is different
+        if MEMORY_AVAILABLE:
+            try:
+                # Try to add to memory using the appropriate function
+                if hasattr(memory, 'add_user_memory'):
+                    await memory.add_user_memory(
+                        chat_id=chat_id,
+                        user_id=user_id,
+                        key="نام صحیح",
+                        value=corrected_name
+                    )
+                elif hasattr(memory, 'add_memory'):
+                    await memory.add_memory(
+                        chat_id=chat_id,
+                        memory_type="user_profile",
+                        user_id=user_id,
+                        content=f"نام صحیح: {corrected_name}"
+                    )
+                else:
+                    logger.warning("Could not find appropriate memory function to store corrected name")
+            except Exception as e:
+                logger.error(f"Error storing corrected name in memory: {e}")
     
     # Get the corrected name if it exists
     user_corrected_name = None
@@ -1080,19 +1126,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             user_name_to_use = user_corrected_name if user_corrected_name else (persian_name if persian_name else user_name)
             
             # Get memory context
-            memory_context = await memory.get_relevant_memory(chat_id, prompt)
-            if memory_context:
-                # Use the process_message_for_memory function instead of add_to_memory
-                message_data = {
-                    "message_id": update.message.message_id,
-                    "chat_id": chat_id,
-                    "sender_id": user_id,
-                    "sender_name": update.message.from_user.username or update.message.from_user.first_name if update.message.from_user else "Unknown",
-                    "text": prompt,
-                    "date": time.time()
-                }
-                # Process the message in the background
-                asyncio.create_task(memory.process_message_for_memory(message_data))
+            if MEMORY_AVAILABLE:
+                try:
+                    memory_context = await memory.get_relevant_memory(chat_id, prompt)
+                except Exception as e:
+                    logger.error(f"Error getting memory context: {e}")
+                    memory_context = None
+            else:
+                memory_context = None
             
             # Generate a response with OpenAI API
             response = await generate_ai_response(
@@ -1122,18 +1163,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             })
             
             # Store the bot's response in memory
-            # Instead of using add_to_memory, use process_message_for_memory
-            bot_message_data = {
-                "message_id": sent_message.message_id,
+            # Prepare message data for memory
+            message_data = {
+                "message_id": update.message.message_id,
                 "chat_id": chat_id,
-                "sender_id": context.bot.id,
-                "sender_name": bot_username,
-                "text": response,
-                "date": time.time(),
-                "is_bot_message": True  # Mark as bot message
+                "sender_id": user_id,
+                "sender_name": update.message.from_user.username or update.message.from_user.first_name if update.message.from_user else "Unknown",
+                "text": prompt,
+                "date": time.time()
             }
-            # Process the bot's response in the background
-            asyncio.create_task(memory.process_message_for_memory(bot_message_data))
+            
+            # Process for memory if the memory module is available
+            if MEMORY_AVAILABLE:
+                # Use the process_message_for_memory function instead of add_to_memory
+                try:
+                    asyncio.create_task(memory.process_message_for_memory(message_data))
+                except Exception as e:
+                    logger.error(f"Error processing message for memory: {e}")
+                    
+                # Also store the bot's response in memory
+                try:
+                    bot_message_data = {
+                        "message_id": sent_message.message_id,
+                        "chat_id": chat_id,
+                        "sender_id": context.bot.id,
+                        "sender_name": bot_username,
+                        "text": response,
+                        "date": time.time(),
+                        "is_bot_message": True  # Mark as bot message
+                    }
+                    # Process the bot's response in the background
+                    asyncio.create_task(memory.process_message_for_memory(bot_message_data))
+                except Exception as e:
+                    logger.error(f"Error storing bot's response in memory: {e}")
 
 def main() -> None:
     """Start the bot."""
