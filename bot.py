@@ -234,6 +234,7 @@ async def generate_ai_response(
         Use emojis, write numbers and names in Persian, and use the search functions
         for up-to-date information.
         Try to keep your answers short and concise, unless you are asked to elaborate.
+        Use people's names in your answers. Transliterate their names to Persian if they are not Persian.
         """
 
         # Adjust system message based on conversation tone
