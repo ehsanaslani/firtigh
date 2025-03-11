@@ -1200,6 +1200,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 def main() -> None:
     """Start the bot."""
+    # Declare global variables that we might modify
+    global MEMORY_AVAILABLE
+    
     # Get the Telegram token from environment variable
     token = os.getenv("TELEGRAM_TOKEN")
     if not token:
@@ -1226,7 +1229,6 @@ def main() -> None:
                 logger.info(f"Using model for analysis: {memory.MODEL_FOR_ANALYSIS}")
         except Exception as e:
             logger.error(f"Error initializing memory: {e}")
-            global MEMORY_AVAILABLE
             MEMORY_AVAILABLE = False
     
     # Log configuration
