@@ -28,35 +28,35 @@ class WeatherService:
             }
             
         try:
-            params = {
-                "q": city,
-                "appid": self.api_key,
-                "units": units
-            }
+        params = {
+            "q": city,
+            "appid": self.api_key,
+            "units": units
+        }
             
             logger.info(f"Fetching weather for {city} with units {units}")
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(self.base_url, params=params) as response:
-                    if response.status != 200:
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(self.base_url, params=params) as response:
+                if response.status != 200:
                         error_data = await response.text()
                         logger.error(f"Failed to fetch weather: HTTP {response.status}. Response: {error_data}")
-                        return {
-                            "success": False,
+                    return {
+                        "success": False,
                             "error": f"خطا در دریافت اطلاعات آب و هوا: کد خطا {response.status}"
-                        }
-                    
-                    data = await response.json()
-                    
+                    }
+                
+                data = await response.json()
+                
             # Format the weather data
             try:
                 weather_info = {
-                    "success": True,
-                    "city": data["name"],
+            "success": True,
+            "city": data["name"],
                     "country": data.get("sys", {}).get("country", ""),
                     "temperature": round(data["main"]["temp"]),
-                    "description": data["weather"][0]["description"],
-                    "humidity": data["main"]["humidity"],
+            "description": data["weather"][0]["description"],
+            "humidity": data["main"]["humidity"],
                     "wind_speed": round(data["wind"]["speed"]),
                     "timestamp": datetime.now().strftime("%H:%M:%S")
                 }

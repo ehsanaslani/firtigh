@@ -7,7 +7,7 @@ import asyncio
 import logging
 import base64
 import json
-from typing import List, Optional, Dict, Tuple, Any, Union
+from typing import List, Optional
 from datetime import datetime
 
 # Third-party imports
@@ -26,7 +26,9 @@ from dotenv import load_dotenv
 
 # Import custom modules
 import config
-import database  # Restore direct import of database module
+import memory
+import database
+import token_tracking
 
 # Load environment variables from .env file
 load_dotenv()
@@ -44,41 +46,14 @@ logger = logging.getLogger(__name__)
 
 # Constants for enhanced memory
 MAX_MEMORY_MESSAGES = 1000  # Maximum number of messages to remember
-BOT_NAME = "فرتیق"
-BOT_FULL_NAME = "فرتیق"
+BOT_NAME = "فیرتیق"
+BOT_FULL_NAME = "فیرتیق الله باقرزاده"
 BOT_DESCRIPTION = "یک بات هوشمند برای کمک به گروه‌های فارسی زبان"
 OPENAI_MODEL_DEFAULT = config.OPENAI_MODEL_DEFAULT
 OPENAI_MODEL_VISION = config.OPENAI_MODEL_VISION
 
-# Local module imports
-try:
-    import memory
-    from token_tracking import track_api_usage
-    MEMORY_AVAILABLE = True
-except ImportError:
-    logger.warning("Memory module not available. Running without memory capabilities.")
-    MEMORY_AVAILABLE = False
-
-# Function to safely update memory availability flag
-def set_memory_available(value: bool):
-    """Safely update the memory availability flag."""
-    global MEMORY_AVAILABLE
-    MEMORY_AVAILABLE = value
-    logger.info(f"Memory availability set to: {value}")
-
-try:
-    import token_tracking
-except ImportError:
-    logger.warning("Token tracking module not available. Running without token tracking.")
-    
 # Import from openai_functions after setting up compatibility
 import openai_functions
-
-# Chat types as constants for compatibility with older versions
-CHAT_TYPE_PRIVATE = 'private'
-CHAT_TYPE_GROUP = 'group'
-CHAT_TYPE_SUPERGROUP = 'supergroup'
-CHAT_TYPE_CHANNEL = 'channel'
 
 # Track token usage (replaced with token_tracking module)
 def log_token_usage(response, model, request_type):
@@ -211,23 +186,21 @@ async def generate_ai_response(
     user_profile_context: Optional[str] = None,
     media_data: Optional[bytes] = None,
     additional_images: Optional[List[bytes]] = None,
-    conversation_context: Optional[str] = None,
-    user_name: Optional[str] = None
+    conversation_context: Optional[str] = None
 ) -> str:
     """
-    Generate a response to a prompt using the AI model.
+    Generate a response using the OpenAI API, with function calling support.
     
     Args:
         prompt: The user's message
-        is_serious: Whether the conversation is serious or not
-        chat_id: The chat ID
-        user_id: The user ID
-        memory_context: Memory context
+        is_serious: Whether this is a serious conversation requiring formal tone
+        chat_id: The chat ID for context-specific functions
+        user_id: The user ID for user-specific functions
+        memory_context: Context from memory for the conversation
         user_profile_context: User profile context
         media_data: Binary data of media (image, etc.)
         additional_images: List of additional image data to include in the context
         conversation_context: Context from the current conversation thread
-        user_name: The user's name to address them by
         
     Returns:
         The generated response
@@ -239,60 +212,28 @@ async def generate_ai_response(
         needs_full_context = not (is_greeting and is_short_query)
         
         # Get memory context if not provided and needed
-        if not memory_context and chat_id and needs_full_context and MEMORY_AVAILABLE:
-            try:
-                memory_context = await memory.get_relevant_memory(chat_id, prompt)
-            except Exception as e:
-                logger.error(f"Error getting relevant memory: {e}")
-                memory_context = None
+        if not memory_context and chat_id and needs_full_context:
+            memory_context = await memory.get_relevant_memory(chat_id, prompt)
             
         # Get user profile context if not provided and needed
-        if not user_profile_context and chat_id and user_id and needs_full_context and MEMORY_AVAILABLE:
-            try:
-                user_profile_context = memory.get_user_profile_context(chat_id, user_id)
-            except Exception as e:
-                logger.error(f"Error getting user profile context: {e}")
-                user_profile_context = None
+        if not user_profile_context and chat_id and user_id and needs_full_context:
+            user_profile_context = memory.get_user_profile_context(chat_id, user_id)
         
-        # Get conversation context from memory if not provided
-        if not conversation_context and needs_full_context:
-            # This would be handled outside this function
-            pass
-
         # Determine if we need the vision model based on media data
         use_vision = bool(media_data) or bool(additional_images)
         
-        # Define a new, more direct and assertive personality
-        system_message = """ربات فارسی‌زبان با لحن مستقیم و رک که به سوالات پاسخ می‌دهد. همیشه به فارسی پاسخ بده، اعداد و اسامی را به فارسی بنویس، و برای اطلاعات به‌روز از توابع جستجو استفاده کن. با کاربران بی‌تعارف و صریح صحبت کن و اگر فکر می‌کنی حق با تو است، مخالفت خود را بیان کن. اگر کاربری از کلمات نامناسب یا توهین‌آمیز استفاده کند، با همان لحن تند پاسخ بده و از همان کلمات رکیک و توهین‌آمیز استفاده کن. با بی ادب ها بی ادب باش. از نام کاربر در پاسخ‌دادن استفاده کن و آن را به فارسی بنویس."""
-
-        # Add user name to system message if available
-        if user_name:
-            system_message += f"\n\nنام کاربر فعلی: {user_name}"
-            # Add instruction to use the name when responding
-            system_message += "\nدر پاسخ خود به کاربر، حتماً از نام او استفاده کن و مستقیماً خطابش کن."
+        # Use a more concise system message to reduce token usage
+        system_message = """ربات فارسی‌زبان با لحن دوستانه که به سوالات پاسخ می‌دهد. همیشه به فارسی پاسخ بده، از ایموجی استفاده کن، اعداد و اسامی را به فارسی بنویس، و برای اطلاعات به‌روز از توابع جستجو استفاده کن."""
 
         # Adjust system message based on conversation tone
         if is_serious:
-            system_message += " لحن جدی و بدون شوخی داشته باش اما همچنان صریح و مستقیم باش."
+            system_message += " لحن رسمی و ساده داشته باش."
             
         # Add user profile context if available and needed (in compressed form)
         if user_profile_context and needs_full_context:
-            try:
-                # Compress user profile to include only essential information
-                compressed_profile = compress_user_profile(user_profile_context)
-                system_message += f"\n\nپروفایل کاربر: {compressed_profile}"
-                
-                # Check if there's a corrected name in the user profile
-                if "نام صحیح:" in compressed_profile:
-                    try:
-                        # Extract corrected name from profile for emphasis
-                        corrected_name_match = re.search(r"نام صحیح: ([^\n]+)", compressed_profile)
-                        if corrected_name_match:
-                            system_message += f"\n\nحتماً از نام صحیح کاربر استفاده کن: {corrected_name_match.group(1)}"
-                    except Exception as e:
-                        logger.error(f"Error extracting corrected name from profile: {e}")
-            except Exception as e:
-                logger.error(f"Error processing user profile: {e}")
+            # Compress user profile to include only essential information
+            compressed_profile = compress_user_profile(user_profile_context)
+            system_message += f"\n\nپروفایل کاربر: {compressed_profile}"
 
         # Prepare the messages array
         messages = [
@@ -330,17 +271,17 @@ async def generate_ai_response(
                         # Ensure media_data is bytes
                         if isinstance(media_data, bytes):
                             content.append({
-                                "type": "image_url",
-                                "image_url": {
+                    "type": "image_url",
+                    "image_url": {
                                     "url": f"data:image/jpeg;base64,{base64.b64encode(media_data).decode('utf-8')}"
-                                }
-                            })
+                    }
+                })
                         else:
                             logger.error(f"Invalid media_data type: {type(media_data)}, expected bytes")
                     except Exception as e:
                         logger.error(f"Error encoding main image: {e}", exc_info=True)
                         # Don't add if invalid
-                
+            
                 # Add additional images if available
                 if additional_images:
                     for img_data in additional_images:
@@ -349,8 +290,8 @@ async def generate_ai_response(
                                 # Ensure img_data is bytes
                                 if isinstance(img_data, bytes):
                                     content.append({
-                                        "type": "image_url",
-                                        "image_url": {
+                            "type": "image_url",
+                            "image_url": {
                                             "url": f"data:image/jpeg;base64,{base64.b64encode(img_data).decode('utf-8')}"
                                         }
                                     })
@@ -485,7 +426,7 @@ async def generate_ai_response(
                         if openai_functions.is_new_openai:
                             second_response = openai_functions.openai_client.chat.completions.create(
                                 model=model_to_use,
-                                messages=messages,
+            messages=messages,
                                 max_tokens=800,  # Reduced from 1000
                                 temperature=0.7
                             )
@@ -629,7 +570,7 @@ async def get_conversation_context(update: Update, context: ContextTypes.DEFAULT
         update: The update object
         context: The context object
         depth: Maximum depth of the reply chain to follow (reduced from 5 to 3)
-        
+    
     Returns:
         Tuple of (context_text, media_data_list, has_context)
     """
@@ -705,18 +646,18 @@ async def get_conversation_context(update: Update, context: ContextTypes.DEFAULT
         main_chain_messages.append(msg_text)
     
     # Process the entire reply chain
-    while current_message and current_message.reply_to_message and current_depth < depth:
-        current_depth += 1
-        replied_to = current_message.reply_to_message
-        
+        while current_message and current_message.reply_to_message and current_depth < depth:
+            current_depth += 1
+            replied_to = current_message.reply_to_message
+            
         # Get sender info for the replied-to message
-        sender_name = "someone"
-        if replied_to.from_user:
-            if replied_to.from_user.username:
-                sender_name = f"@{replied_to.from_user.username}"
-            elif replied_to.from_user.first_name:
-                sender_name = replied_to.from_user.first_name
-        
+            sender_name = "someone"
+            if replied_to.from_user:
+                if replied_to.from_user.username:
+                    sender_name = f"@{replied_to.from_user.username}"
+                elif replied_to.from_user.first_name:
+                    sender_name = replied_to.from_user.first_name
+            
         # Process this message in the reply chain
         msg_text = await process_message(replied_to, sender_name)
         if msg_text:
@@ -844,12 +785,16 @@ def escape_summary_for_markdown(text):
     return text
 
 def to_persian_numbers(text: str) -> str:
-    """Convert English numbers in a text to Persian numbers."""
-    if not text:
-        return ""
+    """
+    Convert English digits in a string to Persian digits.
     
-    # Map English numerals to Persian
-    mapping = {
+    Args:
+        text (str): The text containing English digits
+        
+    Returns:
+        str: The text with English digits replaced by Persian digits
+    """
+    persian_digits = {
         '0': '۰',
         '1': '۱',
         '2': '۲',
@@ -859,351 +804,164 @@ def to_persian_numbers(text: str) -> str:
         '6': '۶',
         '7': '۷',
         '8': '۸',
-        '9': '۹'
+        '9': '۹',
+        ',': '،',
+        '.': '٫'  # Persian decimal separator
     }
     
-    # Replace each English number with its Persian equivalent
-    for english, persian in mapping.items():
+    for english, persian in persian_digits.items():
         text = text.replace(english, persian)
-        
+    
     return text
 
-def transliterate_to_persian(name: str) -> Optional[str]:
-    """
-    Convert common English names to Persian equivalent.
-    
-    Args:
-        name: English name to transliterate
-        
-    Returns:
-        Transliterated Persian name if recognized, otherwise None
-    """
-    if not name:
-        return None
-        
-    # Lowercase the name for comparison
-    normalized_name = name.lower().strip()
-    
-    # Dictionary of common English names to Persian transliterations
-    name_map = {
-        "ehsan": "احسان",
-        "mohsen": "محسن",
-        "amirhossein": "امیرحسین",
-        "salar": "سالار",
-        "mohammad": "محمد",
-        "ali": "علی",
-        "reza": "رضا",
-        "hassan": "حسن",
-        "hossein": "حسین",
-        "mehdi": "مهدی",
-        "saeed": "سعید",
-        "hamid": "حمید",
-        "amir": "امیر",
-        "ahmad": "احمد",
-        "mahmoud": "محمود",
-        "javad": "جواد",
-        "farhad": "فرهاد",
-        "bahram": "بهرام",
-        "nima": "نیما",
-        "arash": "آرش",
-        "kamran": "کامران",
-        "shahab": "شهاب",
-        "amin": "امین",
-        "behrouz": "بهروز",
-        "babak": "بابک",
-        "farshad": "فرشاد",
-        "davood": "داوود",
-        "majid": "مجید",
-        "vahid": "وحید",
-        "fatemeh": "فاطمه",
-        "zahra": "زهرا",
-        "maryam": "مریم",
-        "mahsa": "مهسا",
-        "narges": "نرگس",
-        "sara": "سارا",
-        "sarah": "سارا",
-        "leila": "لیلا",
-        "mina": "مینا",
-        "parisa": "پریسا",
-        "setareh": "ستاره",
-        "shirin": "شیرین",
-        "yasaman": "یاسمن",
-        "elham": "الهام",
-        "bahar": "بهار",
-        "nazanin": "نازنین",
-        "azadeh": "آزاده",
-        "bahare": "بهاره"
-    }
-    
-    # Check for direct matches
-    if normalized_name in name_map:
-        return name_map[normalized_name]
-    
-    # Check for partial matches for compound names
-    for eng_name, per_name in name_map.items():
-        if eng_name in normalized_name:
-            # Names that contain another name as a substring, like "Mohammad" in "MohammadReza"
-            matched_parts = []
-            rest_of_name = normalized_name
-            while rest_of_name:
-                found_match = False
-                for e_name, p_name in name_map.items():
-                    if rest_of_name.startswith(e_name):
-                        matched_parts.append(p_name)
-                        rest_of_name = rest_of_name[len(e_name):]
-                        found_match = True
-                        break
-                if not found_match:
-                    # Skip one character if no match
-                    rest_of_name = rest_of_name[1:]
-            
-            if matched_parts:
-                return ' '.join(matched_parts)
-    
-    # Return original name if no match found
-    return None
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Handle incoming messages, analyze them for memory, and generate a response.
-    """
-    if update.effective_chat.type == CHAT_TYPE_PRIVATE:
-        chat_id = update.effective_chat.id
-    else:
-        chat_id = update.effective_chat.id
+    """Handle incoming messages."""
+    # Skip updates without messages
+    if not update.message or not update.message.chat:
+        return
+        
+    # Extract basic message info
+    message = update.message
+    chat_id = message.chat_id
+    user_id = message.from_user.id if message.from_user else None
+    message_text = message.text or ""
     
-    user_id = update.effective_user.id if update.effective_user else None
-    user_name = None
+    # Store this message in the recent messages list for context
+    if not context.bot_data.get('recent_messages'):
+        context.bot_data['recent_messages'] = {}
+        
+    if not context.bot_data['recent_messages'].get(chat_id):
+        context.bot_data['recent_messages'][chat_id] = []
+        
+    # Add the message to the recent messages list
+    context.bot_data['recent_messages'][chat_id].append({
+        'message_id': message.message_id,
+        'sender': f"@{message.from_user.username}" if message.from_user and message.from_user.username else 
+                  message.from_user.first_name if message.from_user else "someone",
+        'text': message_text,
+        'timestamp': datetime.now().timestamp()
+    })
     
-    # Extract user name from profile for addressing in responses
-    if update.effective_user:
-        if update.effective_user.first_name:
-            user_name = update.effective_user.first_name
-        elif update.effective_user.username:
-            user_name = update.effective_user.username
+    # Limit the size of the recent messages list
+    if len(context.bot_data['recent_messages'][chat_id]) > 50:  # Keep the last 50 messages
+        context.bot_data['recent_messages'][chat_id] = context.bot_data['recent_messages'][chat_id][-50:]
+        
+    # Check if the bot was mentioned or replied to
+    bot_username = context.bot.username
+    is_mentioned = f"@{bot_username}" in message_text or BOT_NAME in message_text
+    is_reply_to_bot = message.reply_to_message and message.reply_to_message.from_user and message.reply_to_message.from_user.username == bot_username
+    is_private_chat = message.chat.type == 'private'
+    
+    # Process the message if the bot was mentioned, replied to, or in a private chat
+    if is_mentioned or is_reply_to_bot or is_private_chat:
+        # Log which condition triggered the bot
+        if is_mentioned:
+            logger.info(f"Bot mentioned in message: {message_text}")
+        elif is_reply_to_bot:
+            logger.info(f"User replied to bot's message: {message_text}")
+        else:
+            logger.info(f"Message in private chat: {message_text}")
             
-    # Try to transliterate the name to Persian
-    persian_name = None
-    if user_name:
-        persian_name = transliterate_to_persian(user_name)
-    
-    # Make sure we have user data initialized in context
-    if 'user_data' not in context.chat_data:
-        context.chat_data['user_data'] = {}
-    
-    if user_id and user_id not in context.chat_data['user_data']:
-        context.chat_data['user_data'][user_id] = {}
-        
-    # Check for name correction in message
-    message_text = update.message.text if update.message and update.message.text else ""
-    
-    # Detect name correction patterns like "My name is [name]" or "Call me [name]"
-    name_correction_patterns = [
-        r"(?:اسم|نام) (?:من|صحیح|درست) (?:است|هست)? ([^\.\?!,]+)",  # "اسم من است X" or "نام درست من X"
-        r"(?:من را|مرا) ([^\.\?!,]+) صدا (?:بزن|کن)",  # "من را X صدا بزن"
-        r"(?:به من|بهم) (?:بگو) ([^\.\?!,]+)",  # "به من بگو X"
-        r"my name is ([^\.\?!,]+)",  # English: "My name is X"
-        r"call me ([^\.\?!,]+)",     # English: "Call me X"
-    ]
-    
-    corrected_name = None
-    for pattern in name_correction_patterns:
-        match = re.search(pattern, message_text, re.IGNORECASE)
-        if match:
-            corrected_name = match.group(1).strip()
-            break
+        # Extract conversation context (including reply chain and recent mentions)
+        context_text, media_data_list, has_context = await get_conversation_context(update, context)
+        if has_context:
+            logger.info(f"Found conversation context: {context_text[:100]}...")
             
-    # If we found a name correction, store it
-    if corrected_name and user_id:
-        # Store the corrected name in chat_data
-        context.chat_data['user_data'][user_id]['corrected_name'] = corrected_name
-        logger.info(f"Stored corrected name for user {user_id}: {corrected_name}")
+        # Tell the user we're processing their message
+        await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
         
-        # Also store in memory - using a try/except in case the memory API is different
-        if MEMORY_AVAILABLE:
-            try:
-                # Try to add to memory using the appropriate function
-                if hasattr(memory, 'add_user_memory'):
-                    await memory.add_user_memory(
-                        chat_id=chat_id,
-                        user_id=user_id,
-                        key="نام صحیح",
-                        value=corrected_name
-                    )
-                elif hasattr(memory, 'add_memory'):
-                    await memory.add_memory(
-                        chat_id=chat_id,
-                        memory_type="user_profile",
-                        user_id=user_id,
-                        content=f"نام صحیح: {corrected_name}"
-                    )
-                else:
-                    logger.warning("Could not find appropriate memory function to store corrected name")
-            except Exception as e:
-                logger.error(f"Error storing corrected name in memory: {e}")
-    
-    # Get the corrected name if it exists
-    user_corrected_name = None
-    if user_id and user_id in context.chat_data.get('user_data', {}) and 'corrected_name' in context.chat_data['user_data'][user_id]:
-        user_corrected_name = context.chat_data['user_data'][user_id]['corrected_name']
-    
-    # Message processing logic
-    if update.message:
-        # Ignore commands
-        if update.message.text and update.message.text.startswith('/'):
-            return
+        # Process any attached media
+        media_data = None
+        additional_images = []
         
-        # Store this message in the recent messages list for context
-        if not context.bot_data.get('recent_messages'):
-            context.bot_data['recent_messages'] = {}
-        
-        if not context.bot_data['recent_messages'].get(chat_id):
-            context.bot_data['recent_messages'][chat_id] = []
-        
-        # Add the message to the recent messages list
-        context.bot_data['recent_messages'][chat_id].append({
-            'message_id': update.message.message_id,
-            'sender': f"@{update.message.from_user.username}" if update.message.from_user and update.message.from_user.username else 
-                      update.message.from_user.first_name if update.message.from_user else "someone",
-            'text': message_text,
-            'timestamp': datetime.now().timestamp()
-        })
-        
-        # Limit the size of the recent messages list
-        if len(context.bot_data['recent_messages'][chat_id]) > 50:  # Keep the last 50 messages
-            context.bot_data['recent_messages'][chat_id] = context.bot_data['recent_messages'][chat_id][-50:]
-        
-        # Check if the bot was mentioned or replied to
-        bot_username = context.bot.username
-        is_mentioned = f"@{bot_username}" in message_text or BOT_NAME in message_text
-        is_reply_to_bot = update.message.reply_to_message and update.message.reply_to_message.from_user and update.message.reply_to_message.from_user.username == bot_username
-        is_private_chat = update.message.chat.type == 'private'
-        
-        # Process the message if the bot was mentioned, replied to, or in a private chat
-        if is_mentioned or is_reply_to_bot or is_private_chat:
-            # Log which condition triggered the bot
-            if is_mentioned:
-                logger.info(f"Bot mentioned in message: {message_text}")
-            elif is_reply_to_bot:
-                logger.info(f"User replied to bot's message: {message_text}")
+        # Extract media directly from the current message
+        media_type, media_description, extracted_media_data = await extract_media_info(message, context)
+        if extracted_media_data:
+            media_data = extracted_media_data
+            
+            # Add any media description to the message text
+        if media_description and not media_description in message_text:
+            if message_text:
+                    message_text += f" {media_description}"
             else:
-                logger.info(f"Message in private chat: {message_text}")
+                    message_text = media_description
+        
+        # Add any additional images from the conversation context
+        if media_data_list:
+            # media_data_list is already a list of binary data, not dictionaries
+            for additional_image_data in media_data_list:
+                # Skip if it's None or identical to the main image
+                if additional_image_data is not None and additional_image_data != media_data:
+                    # Verify it's bytes before adding
+                    if isinstance(additional_image_data, bytes):
+                        additional_images.append(additional_image_data)
+        else:
+                        logger.warning(f"Skipping non-bytes additional image of type: {type(additional_image_data)}")
+        
+        # Clean up the prompt to remove bot mentions
+        prompt = message_text.replace(f"@{bot_username}", "").replace(BOT_NAME, "").strip()
+        if not prompt:
+            prompt = "سلام!"  # Default prompt if only the bot's name was mentioned
             
-            # Extract conversation context (including reply chain and recent mentions)
-            context_text, media_data_list, has_context = await get_conversation_context(update, context)
-            if has_context:
-                logger.info(f"Found conversation context: {context_text[:100]}...")
-            
-            # Tell the user we're processing their message
-            await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-            
-            # Process any attached media
-            media_data = None
-            additional_images = []
-            
-            # Extract media directly from the current message
-            media_type, media_description, extracted_media_data = await extract_media_info(update.message, context)
-            if extracted_media_data:
-                media_data = extracted_media_data
-                
-                # Add any media description to the message text
-                if media_description and not media_description in message_text:
-                    if message_text:
-                        message_text += f" {media_description}"
-                    else:
-                        message_text = media_description
-            
-            # Add any additional images from the conversation context
-            if media_data_list:
-                # media_data_list is already a list of binary data, not dictionaries
-                for additional_image_data in media_data_list:
-                    # Skip if it's None or identical to the main image
-                    if additional_image_data is not None and additional_image_data != media_data:
-                        # Verify it's bytes before adding
-                        if isinstance(additional_image_data, bytes):
-                            additional_images.append(additional_image_data)
-                        else:
-                            logger.warning(f"Skipping non-bytes additional image of type: {type(additional_image_data)}")
-            
-            # Clean up the prompt to remove bot mentions
-            prompt = message_text.replace(f"@{bot_username}", "").replace(BOT_NAME, "").strip()
-            if not prompt:
-                prompt = "سلام!"  # Default prompt if only the bot's name was mentioned
-            
-            # Use the corrected name if available, otherwise use the transliterated name if available, otherwise use the regular name
-            user_name_to_use = user_corrected_name if user_corrected_name else (persian_name if persian_name else user_name)
-            
-            # Get memory context
-            if MEMORY_AVAILABLE:
-                try:
-                    memory_context = await memory.get_relevant_memory(chat_id, prompt)
-                except Exception as e:
-                    logger.error(f"Error getting memory context: {e}")
-                    memory_context = None
-            else:
-                memory_context = None
-            
-            # Generate a response with OpenAI API
-            response = await generate_ai_response(
-                prompt=prompt,
-                chat_id=chat_id,
-                user_id=user_id,
-                conversation_context=context_text,
-                media_data=media_data,
-                additional_images=media_data_list,
-                user_name=user_name_to_use
-            )
-            
-            # Send the response
-            sent_message = await context.bot.send_message(
-                chat_id=chat_id, 
-                text=response,
-                parse_mode=ParseMode.MARKDOWN
-            )
-            
-            # Store the bot's response in recent messages with a special flag
-            context.bot_data['recent_messages'][chat_id].append({
-                'message_id': sent_message.message_id,
-                'sender': f"@{bot_username}",
-                'text': response,
-                'timestamp': datetime.now().timestamp(),
-                'is_bot_message': True
-            })
-            
-            # Store the bot's response in memory
-            # Prepare message data for memory
+        # Get memory context
+        memory_context = await memory.get_relevant_memory(chat_id, prompt)
+        if memory_context:
+            # Use the process_message_for_memory function instead of add_to_memory
             message_data = {
-                "message_id": update.message.message_id,
+                "message_id": message.message_id,
                 "chat_id": chat_id,
                 "sender_id": user_id,
-                "sender_name": update.message.from_user.username or update.message.from_user.first_name if update.message.from_user else "Unknown",
+                "sender_name": message.from_user.username or message.from_user.first_name if message.from_user else "Unknown",
                 "text": prompt,
                 "date": time.time()
             }
+            # Process the message in the background
+            asyncio.create_task(memory.process_message_for_memory(message_data))
             
-            # Process for memory if the memory module is available
-            if MEMORY_AVAILABLE:
-                # Use the process_message_for_memory function instead of add_to_memory
-                try:
-                    asyncio.create_task(memory.process_message_for_memory(message_data))
-                except Exception as e:
-                    logger.error(f"Error processing message for memory: {e}")
-                    
-                # Also store the bot's response in memory
-                try:
-                    bot_message_data = {
-                        "message_id": sent_message.message_id,
-                        "chat_id": chat_id,
-                        "sender_id": context.bot.id,
-                        "sender_name": bot_username,
-                        "text": response,
-                        "date": time.time(),
-                        "is_bot_message": True  # Mark as bot message
-                    }
-                    # Process the bot's response in the background
-                    asyncio.create_task(memory.process_message_for_memory(bot_message_data))
-                except Exception as e:
-                    logger.error(f"Error storing bot's response in memory: {e}")
+        # Get user profile context
+        user_profile_context = memory.get_user_profile_context(chat_id, user_id) if user_id else None
+            
+        # Generate the response
+        response = await generate_ai_response(
+            prompt=prompt,
+            chat_id=chat_id,
+            user_id=user_id,
+            memory_context=memory_context,
+            user_profile_context=user_profile_context,
+            media_data=media_data,
+            additional_images=additional_images if additional_images else None,
+            conversation_context=context_text if has_context else None
+        )
+        
+        # Send the response
+        sent_message = await context.bot.send_message(
+            chat_id=chat_id, 
+            text=response,
+            parse_mode=ParseMode.MARKDOWN
+        )
+        
+        # Store the bot's response in recent messages with a special flag
+        context.bot_data['recent_messages'][chat_id].append({
+            'message_id': sent_message.message_id,
+            'sender': f"@{bot_username}",
+            'text': response,
+            'timestamp': datetime.now().timestamp(),
+            'is_bot_message': True
+        })
+        
+        # Store the bot's response in memory
+        # Instead of using add_to_memory, use process_message_for_memory
+        bot_message_data = {
+            "message_id": sent_message.message_id,
+            "chat_id": chat_id,
+            "sender_id": context.bot.id,
+            "sender_name": bot_username,
+            "text": response,
+            "date": time.time(),
+            "is_bot_message": True  # Mark as bot message
+        }
+        # Process the bot's response in the background
+        asyncio.create_task(memory.process_message_for_memory(bot_message_data))
 
 def main() -> None:
     """Start the bot."""
@@ -1214,33 +972,18 @@ def main() -> None:
         return
 
     # Ensure database is initialized
-    try:
-        database.initialize_database()
-        logger.info("Database initialized successfully")
-    except Exception as e:
-        logger.error(f"Error initializing database: {e}")
-        logger.warning("Bot starting without database initialization!")
+    database.initialize_database()
     
-    # Initialize memory if available
-    if MEMORY_AVAILABLE:
-        try:
-            memory.initialize_memory()
-            logger.info(f"Memory initialized successfully")
-            # Only log memory module constants if memory is available
-            if hasattr(memory, 'MAX_MEMORY_ITEMS_PER_GROUP'):
-                logger.info(f"Memory items per group: {memory.MAX_MEMORY_ITEMS_PER_GROUP}")
-            if hasattr(memory, 'MODEL_FOR_ANALYSIS'):
-                logger.info(f"Using model for analysis: {memory.MODEL_FOR_ANALYSIS}")
-        except Exception as e:
-            logger.error(f"Error initializing memory: {e}")
-            # Use our helper function instead of directly modifying the global
-            set_memory_available(False)
+    # Initialize memory
+    memory.initialize_memory()
     
     # Log configuration
     logger.info(f"Bot name: {BOT_NAME}")
     logger.info(f"Bot full name: {BOT_FULL_NAME}")
     logger.info(f"Memory capacity: {MAX_MEMORY_MESSAGES} messages")
-    
+    logger.info(f"Memory items per group: {memory.MAX_MEMORY_ITEMS_PER_GROUP}")
+    logger.info(f"Using model for analysis: {memory.MODEL_FOR_ANALYSIS}")
+
     # Create the Application
     application = ApplicationBuilder().token(token).build()
 

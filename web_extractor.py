@@ -43,7 +43,7 @@ async def extract_content_from_url(url: str, max_length: int = 10000) -> Optiona
     Args:
         url: The URL to extract content from
         max_length: Maximum length of the content to extract
-        
+    
     Returns:
         Extracted content as a string, or None if extraction failed
     """
@@ -106,16 +106,16 @@ async def extract_content_from_url(url: str, max_length: int = 10000) -> Optiona
         async with aiohttp.ClientSession() as session:
             try:
                 async with session.get(url, headers=DEFAULT_HEADERS, timeout=20) as response:
-                    if response.status != 200:
+                if response.status != 200:
                         return f"خطا: سرور پاسخ نامعتبر برگرداند (کد وضعیت {response.status})"
-                    
+                
                     # Try to get the content as text
-                    html = await response.text()
-                    
+                html = await response.text()
+        
                     # Use a very simple extraction approach
-                    soup = BeautifulSoup(html, 'html.parser')
-                    
-                    # Get the title
+        soup = BeautifulSoup(html, 'html.parser')
+        
+        # Get the title
                     title = soup.title.text.strip() if soup.title else "No Title"
                     
                     # Remove scripts, styles, and other non-content elements
