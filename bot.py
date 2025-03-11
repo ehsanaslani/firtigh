@@ -59,6 +59,13 @@ except ImportError:
     logger.warning("Memory module not available. Running without memory capabilities.")
     MEMORY_AVAILABLE = False
 
+# Function to safely update memory availability flag
+def set_memory_available(value: bool):
+    """Safely update the memory availability flag."""
+    global MEMORY_AVAILABLE
+    MEMORY_AVAILABLE = value
+    logger.info(f"Memory availability set to: {value}")
+
 try:
     import token_tracking
 except ImportError:
@@ -1200,9 +1207,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 def main() -> None:
     """Start the bot."""
-    # Declare global variables that we might modify
-    global MEMORY_AVAILABLE
-    
     # Get the Telegram token from environment variable
     token = os.getenv("TELEGRAM_TOKEN")
     if not token:
@@ -1229,7 +1233,8 @@ def main() -> None:
                 logger.info(f"Using model for analysis: {memory.MODEL_FOR_ANALYSIS}")
         except Exception as e:
             logger.error(f"Error initializing memory: {e}")
-            MEMORY_AVAILABLE = False
+            # Use our helper function instead of directly modifying the global
+            set_memory_available(False)
     
     # Log configuration
     logger.info(f"Bot name: {BOT_NAME}")
