@@ -7,7 +7,7 @@ import asyncio
 import logging
 import base64
 import json
-from typing import List, Optional
+from typing import List, Optional, Dict, Tuple, Any, Union
 from datetime import datetime
 
 # Third-party imports
@@ -26,6 +26,7 @@ from dotenv import load_dotenv
 
 # Import custom modules
 import config
+import database  # Restore direct import of database module
 
 # Load environment variables from .env file
 load_dotenv()
@@ -43,8 +44,8 @@ logger = logging.getLogger(__name__)
 
 # Constants for enhanced memory
 MAX_MEMORY_MESSAGES = 1000  # Maximum number of messages to remember
-BOT_NAME = "فیرتیق"
-BOT_FULL_NAME = "فیرتیق الله باقرزاده"
+BOT_NAME = "فرتیق"
+BOT_FULL_NAME = "فرتیق"
 BOT_DESCRIPTION = "یک بات هوشمند برای کمک به گروه‌های فارسی زبان"
 OPENAI_MODEL_DEFAULT = config.OPENAI_MODEL_DEFAULT
 OPENAI_MODEL_VISION = config.OPENAI_MODEL_VISION
@@ -1206,17 +1207,32 @@ def main() -> None:
         return
 
     # Ensure database is initialized
-    database.initialize_database()
+    try:
+        database.initialize_database()
+        logger.info("Database initialized successfully")
+    except Exception as e:
+        logger.error(f"Error initializing database: {e}")
+        logger.warning("Bot starting without database initialization!")
     
-    # Initialize memory
-    memory.initialize_memory()
+    # Initialize memory if available
+    if MEMORY_AVAILABLE:
+        try:
+            memory.initialize_memory()
+            logger.info(f"Memory initialized successfully")
+            # Only log memory module constants if memory is available
+            if hasattr(memory, 'MAX_MEMORY_ITEMS_PER_GROUP'):
+                logger.info(f"Memory items per group: {memory.MAX_MEMORY_ITEMS_PER_GROUP}")
+            if hasattr(memory, 'MODEL_FOR_ANALYSIS'):
+                logger.info(f"Using model for analysis: {memory.MODEL_FOR_ANALYSIS}")
+        except Exception as e:
+            logger.error(f"Error initializing memory: {e}")
+            global MEMORY_AVAILABLE
+            MEMORY_AVAILABLE = False
     
     # Log configuration
     logger.info(f"Bot name: {BOT_NAME}")
     logger.info(f"Bot full name: {BOT_FULL_NAME}")
     logger.info(f"Memory capacity: {MAX_MEMORY_MESSAGES} messages")
-    logger.info(f"Memory items per group: {memory.MAX_MEMORY_ITEMS_PER_GROUP}")
-    logger.info(f"Using model for analysis: {memory.MODEL_FOR_ANALYSIS}")
     
     # Create the Application
     application = ApplicationBuilder().token(token).build()
