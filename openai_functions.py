@@ -1539,7 +1539,7 @@ def select_relevant_functions(prompt: str, must_include: List[str] = None) -> Li
                 selected_functions.append(func)
     
     # Check for URL extraction needs
-    if any(term in prompt_lower for term in ["http", "www.", ".com", ".ir", ".org", "url", "وبسایت", "سایت", "لینک"]):
+    if any(term in prompt_lower for term in ["http", "www.", ".com", ".ir", ".org", "url", "وبسایت", "سایت", "لینک", "سرچ", "جستجو"]):
         for func in FUNCTION_DEFINITIONS:
             if func["name"] == "extract_content_from_url" and func not in selected_functions:
                 selected_functions.append(func)
