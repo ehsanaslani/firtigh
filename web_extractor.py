@@ -13,6 +13,13 @@ from typing import Optional, Dict, Any, List
 import ssl
 import certifi
 import json
+import scrapy
+from scrapy.crawler import CrawlerRunner
+from scrapy.http import Request
+from twisted.internet import reactor
+from twisted.internet.defer import Deferred
+from scrapy import signals
+from crochet import setup, wait_for
 
 # Check if Brotli is available
 try:
@@ -36,9 +43,101 @@ DEFAULT_HEADERS = {
     "Cache-Control": "max-age=0"
 }
 
+# Initialize crochet for running Scrapy with asyncio
+setup()
+
+class ContentExtractorSpider(scrapy.Spider):
+    """Spider to extract content from a URL."""
+    name = 'content_extractor'
+    
+    def __init__(self, url=None, max_length=10000, *args, **kwargs):
+        super(ContentExtractorSpider, self).__init__(*args, **kwargs)
+        self.start_urls = [url] if url else []
+        self.max_length = max_length
+        self.extracted_content = None
+        self.extracted_title = None
+        
+    def start_requests(self):
+        for url in self.start_urls:
+            yield Request(url=url, headers=DEFAULT_HEADERS, callback=self.parse)
+            
+    def parse(self, response):
+        # Extract title
+        self.extracted_title = response.css('title::text').get() or "No Title"
+        
+        # Try to find main content
+        # First look for common content containers
+        main_content = None
+        for selector in [
+            'article', 
+            '[class*="content"]', 
+            '[class*="post"]', 
+            '[class*="article"]', 
+            'main', 
+            '#content', 
+            '.content', 
+            '.post', 
+            '.article'
+        ]:
+            content = response.css(selector)
+            if content:
+                # Use the first match for simplicity
+                main_content = content.get()
+                break
+                
+        # If no content container found, use the body
+        if not main_content:
+            main_content = response.css('body').get()
+            
+        # Remove scripts, styles, and other non-content elements
+        if main_content:
+            # Use a simple regex-based approach to clean HTML
+            import re
+            main_content = re.sub(r'<script.*?</script>', '', main_content, flags=re.DOTALL)
+            main_content = re.sub(r'<style.*?</style>', '', main_content, flags=re.DOTALL)
+            main_content = re.sub(r'<nav.*?</nav>', '', main_content, flags=re.DOTALL)
+            main_content = re.sub(r'<footer.*?</footer>', '', main_content, flags=re.DOTALL)
+            main_content = re.sub(r'<header.*?</header>', '', main_content, flags=re.DOTALL)
+            
+            # Extract text from HTML
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(main_content, 'html.parser')
+            text = soup.get_text(separator='\n', strip=True)
+            
+            # Clean up text
+            lines = [line.strip() for line in text.splitlines() if line.strip()]
+            text = '\n'.join(lines)
+            
+            # Truncate if too long
+            if len(text) > self.max_length:
+                text = text[:self.max_length] + "..."
+                
+            self.extracted_content = text
+
+
+@wait_for(timeout=30)
+def run_spider(url, max_length=10000):
+    """Run the spider and return results."""
+    results = {}
+    
+    def crawler_results(signal, sender, item, response, spider):
+        nonlocal results
+        results['title'] = spider.extracted_title
+        results['content'] = spider.extracted_content
+        
+    runner = CrawlerRunner()
+    crawler = runner.create_crawler(ContentExtractorSpider)
+    crawler.signals.connect(crawler_results, signal=signals.item_scraped)
+    
+    deferred = crawler.crawl(ContentExtractorSpider, url=url, max_length=max_length)
+    
+    # We return the deferred and crochet waits for it to fire
+    return deferred.addCallback(lambda _: results)
+
+
 async def extract_content_from_url(url: str, max_length: int = 10000) -> Optional[str]:
     """
-    Extract and summarize content from a URL.
+    Extract and summarize content from a URL using Scrapy.
     
     Args:
         url: The URL to extract content from
@@ -58,49 +157,48 @@ async def extract_content_from_url(url: str, max_length: int = 10000) -> Optiona
     url = clean_url(url)
     logger.info(f"Cleaned URL: {url}")
     
-    # Try the standard extraction method first
+    # Try the Scrapy extraction method
     try:
-        # First try to determine the type of content we're dealing with
+        # Determine content type first to handle special cases
         try:
             content_type = await asyncio.wait_for(determine_content_type(url), timeout=10.0)
             logger.info(f"Content type for {url}: {content_type}")
-        except asyncio.TimeoutError:
-            logger.error(f"Timeout determining content type for URL: {url}")
-            content_type = "html"  # Default to HTML
+            
+            # Handle special content types
+            if content_type in ["pdf", "doc", "docx"]:
+                return f"این پیوند حاوی یک فایل {content_type} است. در حال حاضر امکان استخراج محتوا از این نوع فایل وجود ندارد."
+                
+            elif content_type == "json":
+                # For JSON, use the existing extract_json_content function
+                content = await asyncio.wait_for(extract_json_content(url), timeout=10.0)
+                if content:
+                    return content
         except Exception as e:
             logger.error(f"Error determining content type: {e}", exc_info=True)
-            content_type = "html"  # Default to HTML
+            # Continue with HTML extraction
         
-        # Based on content type, use appropriate extraction method
+        # For HTML and other text content, use Scrapy
         try:
-            if content_type == "html":
-                # For HTML pages, extract the main content
-                content = await asyncio.wait_for(extract_html_content(url), timeout=15.0)
-            elif content_type == "json":
-                # For JSON APIs, format the response
-                content = await asyncio.wait_for(extract_json_content(url), timeout=10.0)
-            elif content_type in ["pdf", "doc", "docx"]:
-                # For documents, we'll return a message that we can't process them yet
-                content = f"این پیوند حاوی یک فایل {content_type} است. در حال حاضر امکان استخراج محتوا از این نوع فایل وجود ندارد."
+            # Use crochet to run Scrapy from asyncio
+            results = run_spider(url, max_length)
+            
+            if results and results.get('content'):
+                title = results.get('title', 'No Title')
+                content = results.get('content')
+                return f"عنوان: {title}\n\n{content}"
             else:
-                # For unknown content types, extract whatever we can
-                content = await asyncio.wait_for(extract_generic_content(url), timeout=10.0)
-        except asyncio.TimeoutError:
-            logger.error(f"Timeout extracting content for URL: {url}")
-            content = None
+                logger.warning(f"Scrapy extraction returned empty results for {url}")
+                
         except Exception as e:
-            logger.error(f"Error in extraction method for {content_type}: {e}", exc_info=True)
-            content = None
+            logger.error(f"Error in Scrapy extraction: {e}", exc_info=True)
+            
+        # If we get here, try the fallback method
+        logger.warning(f"Scrapy extraction failed for {url}, trying fallback method")
         
-        if content:
-            return content
-        
-        # If we get here, the standard extraction methods failed
-        logger.warning(f"Standard extraction methods failed for {url}, trying fallback method")
     except Exception as e:
-        logger.error(f"Error in standard extraction process: {e}", exc_info=True)
+        logger.error(f"Error in extraction process: {e}", exc_info=True)
     
-    # Fallback method - try a very simple direct request
+    # Fallback to the original method if Scrapy fails
     try:
         logger.info(f"Using fallback extraction method for {url}")
         async with aiohttp.ClientSession() as session:
