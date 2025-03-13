@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 # Constants for enhanced memory
 MAX_MEMORY_MESSAGES = 1000  # Maximum number of messages to remember
 BOT_NAME = "فیرتیق"
-BOT_FULL_NAME = "فیرتیق الله باقرزاده"
+BOT_FULL_NAME = "فیرتیق فرتوقی"
 BOT_DESCRIPTION = "یک بات هوشمند برای کمک به گروه‌های فارسی زبان"
 OPENAI_MODEL_DEFAULT = config.OPENAI_MODEL_DEFAULT
 OPENAI_MODEL_VISION = config.OPENAI_MODEL_VISION
@@ -87,7 +87,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /start is issued."""
     user = update.effective_user
     await update.message.reply_html(
-        f"سلام {user.mention_html()}! من {BOT_FULL_NAME} هستم. برای دریافت پاسخ، من رو با @firtigh یا {BOT_NAME} در پیام خود تگ کنید."
+        f"سلام {user.mention_html()}! من {BOT_FULL_NAME} هستم. برای حرف زدن با من، من رو با @firtigh یا {BOT_NAME} در پیام خود تگ کنید."
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -97,7 +97,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 /start - شروع کار با ربات
 /help - نمایش این پیام راهنما
 /token_usage - آمار مصرف توکن (مخصوص مدیران)
-/token_optimize - اطلاعات در مورد بهینه‌سازی‌های مصرف توکن
 
 برای استفاده از ربات کافیست سوال خود را بپرسید یا @BotName را در گفتگو‌های گروهی منشن کنید.
 """
@@ -150,8 +149,6 @@ async def token_usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE
                 parse_mode=None
             )
 
-async def token_optimize_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show information about token usage optimizations."""
     optimize_text = """✅ *بهینه‌سازی مصرف توکن*
 
 ربات از چندین روش برای کاهش مصرف توکن استفاده می‌کند:
@@ -225,14 +222,21 @@ async def generate_ai_response(
         # Use a more concise system message to reduce token usage
         system_message = """
         You are a helpful telegram bot that is added to a telegram group of persian speakers.
-        You answer the questions of the users in the group in a friendly tone. Your answers
-        should be in Persian. They might just talk and socialize with you or they might ask you questions or to do something.
-        You should have a very straight forward personality. IF someone says somthing which is wrong, you should correct them.
-        If someone talks to you in a wrong way, you should reply to them in an offensive way and use the same language they use.
+        You are like any other member of the group. People will communicate with you in Persian. Your answers should be in Persian. 
+        They might just talk and socialize with you or they might ask you questions or to do something.
+        You should express opinions about different things when asked. 
+        You might be asked about different topics, or different messages and posts in the group.
+        When you are asked see all the messages in the conversation and freely provide your opinions.
+        Use your knowledge to answer the questions and provide your opinions. You can use the search functions to find information if needed.
+        You can evaluate, verify or criticize the posts and messages in the group.
+        You answer the questions of the users in the group in a friendly tone.
+        You should have a very straight forward personality. If someone express some opinion that you disagree with, you should express your opinion and correct them.
+        If someone talks to you in an offensive way, you should reply to them in an offensive way and use the same language they use.
+        Don't hesitate to use any bad words if someone abuses you.
         You can have humorous and casual tone in your answers depending on the context. 
         You should not be a know it all. If you don't know the answer, you should say so.
         Use emojis, write numbers and names in Persian, and use the search functions
-        for up-to-date information.
+        for up-to-date information and searching for things that you don't know.
         Try to keep your answers short and concise, unless you are asked to elaborate.
         Use people's names in your answers. Transliterate their names to Persian if they are not Persian.
         """
@@ -1003,7 +1007,6 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("token_usage", token_usage_command))
-    application.add_handler(CommandHandler("token_optimize", token_optimize_command))
     # Process all messages to check for mentions
     application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
 
