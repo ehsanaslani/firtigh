@@ -259,7 +259,7 @@ async def generate_ai_response(
         # Add conversation context if available and needed
         if conversation_context and needs_full_context:
             # Truncate conversation context to reduce token usage
-            truncated_context = truncate_context(conversation_context, max_length=1000)
+            truncated_context = truncate_context(conversation_context, max_length=2000)
             
             messages.append({
                 "role": "system", 
