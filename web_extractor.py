@@ -225,7 +225,7 @@ async def extract_content_from_url(url: str, max_length: int = 10000) -> Optiona
         logger.info(f"Using fallback extraction method for {url}")
         async with async_playwright() as p:
             # Configure Chrome for Heroku environment
-            chrome_executable_path = os.getenv('GOOGLE_CHROME_BIN', None)
+            chrome_executable_path = os.getenv('CHROME_BIN', None)
             browser_args = []
             
             if chrome_executable_path:  # We're on Heroku
@@ -233,7 +233,8 @@ async def extract_content_from_url(url: str, max_length: int = 10000) -> Optiona
                     '--disable-dev-shm-usage',
                     '--no-sandbox',
                     '--disable-gpu',
-                    '--disable-software-rasterizer',
+                    '--single-process',
+                    '--no-zygote',
                     '--disable-setuid-sandbox',
                 ]
             
@@ -244,35 +245,48 @@ async def extract_content_from_url(url: str, max_length: int = 10000) -> Optiona
                 args=browser_args
             )
             
-            page = await browser.new_page()
-            await page.goto(url)
+            # Add timeout and viewport size
+            context = await browser.new_context(
+                viewport={'width': 1280, 'height': 800},
+                timeout=30000  # 30 seconds timeout
+            )
             
-            # Try to get the content as text
-            html = await page.content()
+            page = await context.new_page()
             
-            # Use a very simple extraction approach
-            soup = BeautifulSoup(html, 'html.parser')
-            
-            # Get the title
-            title = soup.title.text.strip() if soup.title else "No Title"
-            
-            # Remove scripts, styles, and other non-content elements
-            for tag in soup(['script', 'style', 'meta', 'link', 'noscript', 'iframe']):
-                tag.decompose()
-            
-            # Get all text
-            text = soup.get_text(separator='\n', strip=True)
-            
-            # Clean up the text
-            lines = [line.strip() for line in text.splitlines() if line.strip()]
-            text = '\n'.join(lines)
-            
-            # Truncate if too long
-            if len(text) > max_length:
-                text = text[:max_length] + "..."
-            
-            return f"عنوان: {title}\n\n{text}"
-            
+            try:
+                # Navigate with timeout
+                await page.goto(url, wait_until='networkidle', timeout=30000)
+                
+                # Try to get the content as text
+                html = await page.content()
+                
+                # Use a very simple extraction approach
+                soup = BeautifulSoup(html, 'html.parser')
+                
+                # Get the title
+                title = soup.title.text.strip() if soup.title else "No Title"
+                
+                # Remove scripts, styles, and other non-content elements
+                for tag in soup(['script', 'style', 'meta', 'link', 'noscript', 'iframe']):
+                    tag.decompose()
+                
+                # Get all text
+                text = soup.get_text(separator='\n', strip=True)
+                
+                # Clean up the text
+                lines = [line.strip() for line in text.splitlines() if line.strip()]
+                text = '\n'.join(lines)
+                
+                # Truncate if too long
+                if len(text) > max_length:
+                    text = text[:max_length] + "..."
+                
+                return f"عنوان: {title}\n\n{text}"
+                
+            finally:
+                await context.close()
+                await browser.close()
+                
     except Exception as e:
         logger.error(f"Fallback extraction failed: {e}", exc_info=True)
         if os.getenv('HEROKU_APP_NAME'):
