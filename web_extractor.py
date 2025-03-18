@@ -13,15 +13,8 @@ from typing import Optional, Dict, Any, List
 import ssl
 import certifi
 import json
-import scrapy
-from scrapy.crawler import CrawlerRunner
-from scrapy.http import Request
-from twisted.internet import reactor
-from twisted.internet.defer import Deferred
-from scrapy import signals
-from crochet import setup, wait_for
+from playwright.async_api import async_playwright
 import os
-from playwright import async_playwright
 import sentry_sdk  # Optional, but recommended for production monitoring
 import psutil
 import gc
@@ -56,110 +49,9 @@ DEFAULT_HEADERS = {
     "Cache-Control": "max-age=0"
 }
 
-# Initialize crochet for running Scrapy with asyncio
-setup()
-
-class ContentExtractorSpider(scrapy.Spider):
-    """Spider to extract content from a URL."""
-    name = 'content_extractor'
-    
-    def __init__(self, url=None, max_length=10000, *args, **kwargs):
-        super(ContentExtractorSpider, self).__init__(*args, **kwargs)
-        self.start_urls = [url] if url else []
-        self.max_length = max_length
-        self.extracted_content = None
-        self.extracted_title = None
-        
-    def start_requests(self):
-        for url in self.start_urls:
-            yield Request(url=url, headers=DEFAULT_HEADERS, callback=self.parse)
-            
-    def parse(self, response):
-        # Extract title
-        self.extracted_title = response.css('title::text').get() or "No Title"
-        
-        # Try to find main content
-        # First look for common content containers
-        main_content = None
-        for selector in [
-            'article', 
-            '[class*="content"]', 
-            '[class*="post"]', 
-            '[class*="article"]', 
-            'main', 
-            '#content', 
-            '.content', 
-            '.post', 
-            '.article'
-        ]:
-            content = response.css(selector)
-            if content:
-                # Use the first match for simplicity
-                main_content = content.get()
-                break
-                
-        # If no content container found, use the body
-        if not main_content:
-            main_content = response.css('body').get()
-            
-        # Remove scripts, styles, and other non-content elements
-        if main_content:
-            # Use a simple regex-based approach to clean HTML
-            import re
-            main_content = re.sub(r'<script.*?</script>', '', main_content, flags=re.DOTALL)
-            main_content = re.sub(r'<style.*?</style>', '', main_content, flags=re.DOTALL)
-            main_content = re.sub(r'<nav.*?</nav>', '', main_content, flags=re.DOTALL)
-            main_content = re.sub(r'<footer.*?</footer>', '', main_content, flags=re.DOTALL)
-            main_content = re.sub(r'<header.*?</header>', '', main_content, flags=re.DOTALL)
-            
-            # Extract text from HTML
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(main_content, 'html.parser')
-            text = soup.get_text(separator='\n', strip=True)
-            
-            # Clean up text
-            lines = [line.strip() for line in text.splitlines() if line.strip()]
-            text = '\n'.join(lines)
-            
-            # Truncate if too long
-            if len(text) > self.max_length:
-                text = text[:self.max_length] + "..."
-                
-            self.extracted_content = text
-
-
-@wait_for(timeout=30)
-def run_spider(url, max_length=10000):
-    """Run the spider and return results."""
-    results = {}
-    
-    def crawler_results(signal, sender, item, response, spider):
-        nonlocal results
-        results['title'] = spider.extracted_title
-        results['content'] = spider.extracted_content
-        
-    runner = CrawlerRunner()
-    crawler = runner.create_crawler(ContentExtractorSpider)
-    crawler.signals.connect(crawler_results, signal=signals.item_scraped)
-    
-    deferred = crawler.crawl(ContentExtractorSpider, url=url, max_length=max_length)
-    
-    # We return the deferred and crochet waits for it to fire
-    return deferred.addCallback(lambda _: results)
-
-
-async def check_memory_usage():
-    """Monitor memory usage and force garbage collection if needed"""
-    process = psutil.Process(os.getpid())
-    memory_usage = process.memory_info().rss / 1024 / 1024  # Convert to MB
-    if memory_usage > 450:  # Heroku's free tier has 512MB limit
-        gc.collect()
-        logger.warning(f"High memory usage detected: {memory_usage}MB - Garbage collection triggered")
-
 async def extract_content_from_url(url: str, max_length: int = 10000) -> Optional[str]:
-    await check_memory_usage()
     """
-    Extract and summarize content from a URL using Scrapy.
+    Extract and summarize content from a URL using Playwright.
     
     Args:
         url: The URL to extract content from
@@ -179,119 +71,179 @@ async def extract_content_from_url(url: str, max_length: int = 10000) -> Optiona
     url = clean_url(url)
     logger.info(f"Cleaned URL: {url}")
     
-    # Try the Scrapy extraction method
     try:
-        # Determine content type first to handle special cases
-        try:
-            content_type = await asyncio.wait_for(determine_content_type(url), timeout=10.0)
-            logger.info(f"Content type for {url}: {content_type}")
-            
-            # Handle special content types
-            if content_type in ["pdf", "doc", "docx"]:
-                return f"این پیوند حاوی یک فایل {content_type} است. در حال حاضر امکان استخراج محتوا از این نوع فایل وجود ندارد."
-                
-            elif content_type == "json":
-                # For JSON, use the existing extract_json_content function
-                content = await asyncio.wait_for(extract_json_content(url), timeout=10.0)
-                if content:
-                    return content
-        except Exception as e:
-            logger.error(f"Error determining content type: {e}", exc_info=True)
-            # Continue with HTML extraction
-        
-        # For HTML and other text content, use Scrapy
-        try:
-            # Use crochet to run Scrapy from asyncio
-            results = run_spider(url, max_length)
-            
-            if results and results.get('content'):
-                title = results.get('title', 'No Title')
-                content = results.get('content')
-                return f"عنوان: {title}\n\n{content}"
-            else:
-                logger.warning(f"Scrapy extraction returned empty results for {url}")
-                
-        except Exception as e:
-            logger.error(f"Error in Scrapy extraction: {e}", exc_info=True)
-            
-        # If we get here, try the fallback method
-        logger.warning(f"Scrapy extraction failed for {url}, trying fallback method")
-        
-    except Exception as e:
-        logger.error(f"Error in extraction process: {e}", exc_info=True)
-    
-    # Fallback to the original method if Scrapy fails
-    try:
-        logger.info(f"Using fallback extraction method for {url}")
+        # Try Playwright first for JavaScript-rendered content
         async with async_playwright() as p:
-            # Configure Chrome for Heroku environment
-            chrome_executable_path = os.getenv('CHROME_BIN', None)
-            browser_args = []
+            browser_args = [
+                '--disable-dev-shm-usage',
+                '--no-sandbox',
+                '--disable-gpu',
+                '--disable-setuid-sandbox',
+            ]
             
-            if chrome_executable_path:  # We're on Heroku
-                browser_args = [
-                    '--disable-dev-shm-usage',
-                    '--no-sandbox',
-                    '--disable-gpu',
-                    '--single-process',
-                    '--no-zygote',
-                    '--disable-setuid-sandbox',
-                ]
-            
-            # Launch browser with appropriate configuration
             browser = await p.chromium.launch(
                 headless=True,
-                executable_path=chrome_executable_path,
                 args=browser_args
             )
             
-            # Add timeout and viewport size
-            context = await browser.new_context(
-                viewport={'width': 1280, 'height': 800},
-                timeout=30000  # 30 seconds timeout
-            )
-            
-            page = await context.new_page()
-            
             try:
-                # Navigate with timeout
-                await page.goto(url, wait_until='networkidle', timeout=30000)
+                context = await browser.new_context(
+                    viewport={'width': 1280, 'height': 800},
+                    user_agent=DEFAULT_HEADERS["User-Agent"]
+                )
+                page = await context.new_page()
                 
-                # Try to get the content as text
-                html = await page.content()
+                # Navigate to the URL with timeout
+                try:
+                    await page.goto(url, wait_until='networkidle', timeout=30000)
+                except Exception as e:
+                    logger.warning(f"Page load timeout or error: {e}")
+                    # Continue anyway as the page might have loaded partially
                 
-                # Use a very simple extraction approach
-                soup = BeautifulSoup(html, 'html.parser')
+                # Get the page title
+                title = await page.title()
                 
-                # Get the title
-                title = soup.title.text.strip() if soup.title else "No Title"
+                # Try to find main content
+                content = None
+                for selector in [
+                    'article', 
+                    '[class*="content"]',
+                    '[class*="post"]',
+                    '[class*="article"]',
+                    'main',
+                    '#content',
+                    '.content',
+                    '.post',
+                    '.article'
+                ]:
+                    try:
+                        elements = await page.query_selector_all(selector)
+                        if elements:
+                            # Get text from all matching elements
+                            texts = []
+                            for element in elements:
+                                text = await element.text_content()
+                                if text:
+                                    texts.append(text.strip())
+                            
+                            # Use the longest text content
+                            if texts:
+                                content = max(texts, key=len)
+                                break
+                    except Exception as e:
+                        logger.debug(f"Error with selector {selector}: {e}")
                 
-                # Remove scripts, styles, and other non-content elements
-                for tag in soup(['script', 'style', 'meta', 'link', 'noscript', 'iframe']):
-                    tag.decompose()
+                # If no specific content found, get all body text
+                if not content:
+                    content = await page.evaluate('''
+                        () => {
+                            // Remove unwanted elements
+                            const elementsToRemove = document.querySelectorAll('script, style, nav, footer, header');
+                            elementsToRemove.forEach(el => el.remove());
+                            
+                            // Get all text nodes
+                            return document.body.innerText;
+                        }
+                    ''')
                 
-                # Get all text
-                text = soup.get_text(separator='\n', strip=True)
+                await browser.close()
                 
-                # Clean up the text
-                lines = [line.strip() for line in text.splitlines() if line.strip()]
-                text = '\n'.join(lines)
+                if content:
+                    # Clean up the text
+                    content = clean_extracted_text(content)
+                    
+                    # Truncate if too long
+                    if len(content) > max_length:
+                        content = content[:max_length] + "..."
+                    
+                    return f"عنوان: {title}\n\n{content}"
                 
-                # Truncate if too long
-                if len(text) > max_length:
-                    text = text[:max_length] + "..."
-                
-                return f"عنوان: {title}\n\n{text}"
-                
-            finally:
-                await context.close()
+            except Exception as e:
+                logger.error(f"Error in Playwright extraction: {e}", exc_info=True)
                 await browser.close()
                 
     except Exception as e:
-        logger.error(f"Fallback extraction failed: {e}", exc_info=True)
-        if os.getenv('HEROKU_APP_NAME'):
-            sentry_sdk.capture_exception(e)
-        return f"خطا: مشکلی در استخراج محتوا رخ داد. لطفاً بعداً دوباره تلاش کنید."
+        logger.error(f"Error setting up Playwright: {e}", exc_info=True)
+    
+    # Fallback to basic extraction if Playwright fails
+    try:
+        logger.info(f"Using fallback extraction method for {url}")
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.get(url, headers=DEFAULT_HEADERS, timeout=20) as response:
+                    if response.status != 200:
+                        return f"خطا: سرور پاسخ نامعتبر برگرداند (کد وضعیت {response.status})"
+                    
+                    html = await response.text()
+                    soup = BeautifulSoup(html, 'html.parser')
+                    
+                    # Get the title
+                    title = soup.title.text.strip() if soup.title else "No Title"
+                    
+                    # Remove unwanted elements
+                    for element in soup.select('script, style, nav, footer, header'):
+                        element.decompose()
+                    
+                    # Get all text
+                    text = soup.get_text(separator='\n', strip=True)
+                    
+                    # Clean up the text
+                    text = clean_extracted_text(text)
+                    
+                    # Truncate if too long
+                    if len(text) > max_length:
+                        text = text[:max_length] + "..."
+                    
+                    return f"عنوان: {title}\n\n{text}"
+                    
+            except Exception as e:
+                logger.error(f"Fallback extraction failed: {e}", exc_info=True)
+                return f"خطا: نتوانستم محتوای وب‌سایت را استخراج کنم: {str(e)}"
+                
+    except Exception as e:
+        logger.error(f"Fatal error in extraction: {e}", exc_info=True)
+        return f"خطا: مشکل جدی در استخراج محتوا: {str(e)}"
+
+def is_valid_url(url: str) -> bool:
+    """Check if a URL is valid."""
+    if not url:
+        return False
+        
+    try:
+        result = urlparse(url)
+        return all([result.scheme, result.netloc])
+    except:
+        return False
+
+def clean_url(url: str) -> str:
+    """Clean and normalize the URL."""
+    url = url.strip()
+    if not url.startswith(('http://', 'https://')):
+        url = 'https://' + url
+    
+    # Remove URL fragments
+    url = url.split('#')[0]
+    
+    return url
+
+def clean_extracted_text(text: str) -> str:
+    """Clean up extracted text by removing extra whitespace and normalizing line breaks."""
+    # Replace multiple newlines with a single newline
+    text = re.sub(r'\n\s*\n', '\n\n', text)
+    
+    # Replace multiple spaces with a single space
+    text = re.sub(r' +', ' ', text)
+    
+    # Remove very short lines (likely menu items or buttons)
+    lines = [line for line in text.splitlines() if len(line.strip()) > 30]
+    
+    # Join lines back together
+    text = '\n'.join(lines)
+    
+    # Trim leading/trailing whitespace
+    text = text.strip()
+    
+    return text
 
 async def determine_content_type(url: str) -> str:
     """
@@ -473,41 +425,6 @@ async def extract_generic_content(url: str) -> Optional[str]:
         logger.error(f"Error extracting generic content: {e}", exc_info=True)
         return None
 
-def is_valid_url(url: str) -> bool:
-    """Check if a URL is valid."""
-    if not url:
-        return False
-        
-    try:
-        result = urlparse(url)
-        return all([result.scheme, result.netloc])
-    except:
-        return False
-
-def clean_url(url: str) -> str:
-    """Clean and normalize the URL."""
-    url = url.strip()
-    if not url.startswith(('http://', 'https://')):
-        url = 'https://' + url
-    
-    # Remove URL fragments
-    url = url.split('#')[0]
-    
-    return url
-
-def clean_extracted_text(text: str) -> str:
-    """Clean up extracted text by removing extra whitespace and normalizing line breaks."""
-    # Replace multiple newlines with a single newline
-    text = re.sub(r'\n\s*\n', '\n\n', text)
-    
-    # Replace multiple spaces with a single space
-    text = re.sub(r' +', ' ', text)
-    
-    # Trim leading/trailing whitespace
-    text = text.strip()
-    
-    return text
-
 def format_json_for_display(json_data: Any, max_depth: int = 2, current_depth: int = 0) -> str:
     """
     Format JSON data for display in a human-readable way.
@@ -544,4 +461,12 @@ def format_json_for_display(json_data: Any, max_depth: int = 2, current_depth: i
         return "null"
     
     else:
-        return str(json_data) 
+        return str(json_data)
+
+async def check_memory_usage():
+    """Monitor memory usage and force garbage collection if needed"""
+    process = psutil.Process(os.getpid())
+    memory_usage = process.memory_info().rss / 1024 / 1024  # Convert to MB
+    if memory_usage > 450:  # Heroku's free tier has 512MB limit
+        gc.collect()
+        logger.warning(f"High memory usage detected: {memory_usage}MB - Garbage collection triggered") 
