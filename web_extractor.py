@@ -20,6 +20,19 @@ from twisted.internet import reactor
 from twisted.internet.defer import Deferred
 from scrapy import signals
 from crochet import setup, wait_for
+import os
+from playwright import async_playwright
+import sentry_sdk  # Optional, but recommended for production monitoring
+import psutil
+import gc
+
+# Initialize error tracking (optional)
+if os.getenv('HEROKU_APP_NAME'):  # Only in production
+    sentry_sdk.init(
+        dsn="your-sentry-dsn",  # If you use Sentry
+        traces_sample_rate=1.0,
+        environment="production"
+    )
 
 # Check if Brotli is available
 try:
@@ -135,7 +148,16 @@ def run_spider(url, max_length=10000):
     return deferred.addCallback(lambda _: results)
 
 
+async def check_memory_usage():
+    """Monitor memory usage and force garbage collection if needed"""
+    process = psutil.Process(os.getpid())
+    memory_usage = process.memory_info().rss / 1024 / 1024  # Convert to MB
+    if memory_usage > 450:  # Heroku's free tier has 512MB limit
+        gc.collect()
+        logger.warning(f"High memory usage detected: {memory_usage}MB - Garbage collection triggered")
+
 async def extract_content_from_url(url: str, max_length: int = 10000) -> Optional[str]:
+    await check_memory_usage()
     """
     Extract and summarize content from a URL using Scrapy.
     
@@ -201,44 +223,61 @@ async def extract_content_from_url(url: str, max_length: int = 10000) -> Optiona
     # Fallback to the original method if Scrapy fails
     try:
         logger.info(f"Using fallback extraction method for {url}")
-        async with aiohttp.ClientSession() as session:
-            try:
-                async with session.get(url, headers=DEFAULT_HEADERS, timeout=20) as response:
-                    if response.status != 200:
-                        return f"خطا: سرور پاسخ نامعتبر برگرداند (کد وضعیت {response.status})"
-                
-                    # Try to get the content as text
-                    html = await response.text()
-        
-                    # Use a very simple extraction approach
-                    soup = BeautifulSoup(html, 'html.parser')
-        
-                    # Get the title
-                    title = soup.title.text.strip() if soup.title else "No Title"
-        
-                    # Remove scripts, styles, and other non-content elements
-                    for tag in soup(['script', 'style', 'meta', 'link', 'noscript', 'iframe']):
-                        tag.decompose()
-                    
-                    # Get all text
-                    text = soup.get_text(separator='\n', strip=True)
-                    
-                    # Clean up the text
-                    lines = [line.strip() for line in text.splitlines() if line.strip()]
-                    text = '\n'.join(lines)
-                    
-                    # Truncate if too long
-                    if len(text) > max_length:
-                        text = text[:max_length] + "..."
-                    
-                    return f"عنوان: {title}\n\n{text}"
-                    
-            except Exception as e:
-                logger.error(f"Fallback extraction failed: {e}", exc_info=True)
-                return f"خطا: نتوانستم محتوای وب‌سایت را استخراج کنم: {str(e)}"
+        async with async_playwright() as p:
+            # Configure Chrome for Heroku environment
+            chrome_executable_path = os.getenv('GOOGLE_CHROME_BIN', None)
+            browser_args = []
+            
+            if chrome_executable_path:  # We're on Heroku
+                browser_args = [
+                    '--disable-dev-shm-usage',
+                    '--no-sandbox',
+                    '--disable-gpu',
+                    '--disable-software-rasterizer',
+                    '--disable-setuid-sandbox',
+                ]
+            
+            # Launch browser with appropriate configuration
+            browser = await p.chromium.launch(
+                headless=True,
+                executable_path=chrome_executable_path,
+                args=browser_args
+            )
+            
+            page = await browser.new_page()
+            await page.goto(url)
+            
+            # Try to get the content as text
+            html = await page.content()
+            
+            # Use a very simple extraction approach
+            soup = BeautifulSoup(html, 'html.parser')
+            
+            # Get the title
+            title = soup.title.text.strip() if soup.title else "No Title"
+            
+            # Remove scripts, styles, and other non-content elements
+            for tag in soup(['script', 'style', 'meta', 'link', 'noscript', 'iframe']):
+                tag.decompose()
+            
+            # Get all text
+            text = soup.get_text(separator='\n', strip=True)
+            
+            # Clean up the text
+            lines = [line.strip() for line in text.splitlines() if line.strip()]
+            text = '\n'.join(lines)
+            
+            # Truncate if too long
+            if len(text) > max_length:
+                text = text[:max_length] + "..."
+            
+            return f"عنوان: {title}\n\n{text}"
+            
     except Exception as e:
-        logger.error(f"Fatal error in fallback extraction: {e}", exc_info=True)
-        return f"خطا: مشکل جدی در استخراج محتوا: {str(e)}"
+        logger.error(f"Fallback extraction failed: {e}", exc_info=True)
+        if os.getenv('HEROKU_APP_NAME'):
+            sentry_sdk.capture_exception(e)
+        return f"خطا: مشکلی در استخراج محتوا رخ داد. لطفاً بعداً دوباره تلاش کنید."
 
 async def determine_content_type(url: str) -> str:
     """
