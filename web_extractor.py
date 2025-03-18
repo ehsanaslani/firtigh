@@ -15,17 +15,8 @@ import certifi
 import json
 from playwright.async_api import async_playwright
 import os
-import sentry_sdk  # Optional, but recommended for production monitoring
 import psutil
 import gc
-
-# Initialize error tracking (optional)
-if os.getenv('HEROKU_APP_NAME'):  # Only in production
-    sentry_sdk.init(
-        dsn="your-sentry-dsn",  # If you use Sentry
-        traces_sample_rate=1.0,
-        environment="production"
-    )
 
 # Check if Brotli is available
 try:
@@ -201,8 +192,8 @@ async def extract_content_from_url(url: str, max_length: int = 10000) -> Optiona
                 return f"خطا: نتوانستم محتوای وب‌سایت را استخراج کنم: {str(e)}"
                 
     except Exception as e:
-        logger.error(f"Fatal error in extraction: {e}", exc_info=True)
-        return f"خطا: مشکل جدی در استخراج محتوا: {str(e)}"
+        logger.error(f"Error in content extraction: {e}", exc_info=True)
+        return f"خطا: نتوانستم محتوای وب‌سایت را استخراج کنم: {str(e)}"
 
 def is_valid_url(url: str) -> bool:
     """Check if a URL is valid."""
